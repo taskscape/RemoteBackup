@@ -41,11 +41,7 @@ public class FtpBackupRunner(ILogger<FtpBackupRunner> logger)
         Directory.CreateDirectory(currentRoot);
         Directory.CreateDirectory(historyRoot);
 
-        using var client = new FtpClient(
-            job.Host,
-            job.Port,
-            job.Username,
-            job.Password);
+        using var client = new FtpClient(job.Host, job.Username, job.Password, job.Port);
 
         client.Config.EncryptionMode = ParseEncryptionMode(job.Encryption);
         client.Config.DataConnectionType = job.Passive
@@ -82,20 +78,18 @@ public class FtpBackupRunner(ILogger<FtpBackupRunner> logger)
             job.Port,
             job.Name);
 
-        await client.ConnectAsync(cancellationToken);
+        client.Connect();
         logger.LogInformation(
             "Connected to {host}. Starting mirror of {remotePath}.",
             job.Host,
             remotePath);
 
-        var results = await client.DownloadDirectory(
+        var results = client.DownloadDirectory(
             currentRoot,
             remotePath,
             FtpFolderSyncMode.Mirror,
             FtpLocalExists.Overwrite,
-            FtpVerify.None,
-            progress: null,
-            token: cancellationToken);
+            FtpVerify.None);
 
         LogResults(job.Name, results);
 
