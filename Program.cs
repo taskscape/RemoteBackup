@@ -26,5 +26,12 @@ builder.Logging.AddEventLog(new EventLogSettings
 builder.Logging.AddFileLogger(
     builder.Configuration.GetSection(FileLoggerOptions.SectionName));
 
+int starHour = builder.Configuration.GetValue<int>("ServiceSettings:StartHour");
+int startMinute = builder.Configuration.GetValue<int>("ServiceSettings:StartMinute");
+ServiceScheduler.StartServiceAtConfiguredTime(starHour, startMinute, () =>
+{
+    Console.WriteLine("The timer worked, the service starts!");
+});
+
 var host = builder.Build();
 host.Run();
