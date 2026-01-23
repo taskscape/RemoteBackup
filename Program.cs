@@ -2,6 +2,15 @@ using BackupService;
 using Microsoft.Extensions.Logging.EventLog;
 
 var builder = Host.CreateApplicationBuilder(args);
+var backupOptions = builder.Configuration.GetSection("BackupOptions").Get<BackupOptions>();
+
+    if (!backupOptions.Backups.Any())
+    {
+        Console.WriteLine("Nie znaleziono backupów w konfiguracji!");
+        return; 
+    }
+
+var backupJob = backupOptions.Backups.First();
 
 builder.Services.Configure<BackupOptions>(
     builder.Configuration.GetSection(BackupOptions.SectionName));
@@ -23,6 +32,7 @@ builder.Logging.AddEventLog(new EventLogSettings
     LogName = "Application",
     SourceName = "BackupService"
 });
+
 builder.Logging.AddFileLogger(
     builder.Configuration.GetSection(FileLoggerOptions.SectionName));
 
@@ -34,4 +44,21 @@ ServiceScheduler.StartServiceAtConfiguredTime(starHour, startMinute, () =>
 });
 
 var host = builder.Build();
+
+var logger = host.Services.GetRequiredService<ILogger<FtpBackupRunner>>();
+// FtpBackupRunner: kopiuje pliki z serwera FTP na lokalny dysk
+var ftpRunner = new FtpBackupRunner(logger);
+
+try
+{
+    Console.WriteLine("I'm starting a test of downloading files from FTP");
+    
+    await ftpRunner.RunJobAsync(backupJob, backupOptions, CancellationToken.None);
+    Console.WriteLine("FTP test completed! Files should be in C:\\Remotebeat.test");
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"An error occurred during the test: {ex.Message}");
+}
+
 host.Run();
