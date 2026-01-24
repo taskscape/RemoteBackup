@@ -54,7 +54,7 @@ try
     Console.WriteLine("I'm starting a test of downloading files from FTP");
     
     await ftpRunner.RunJobAsync(backupJob, backupOptions, CancellationToken.None);
-    Console.WriteLine("FTP test completed! Files should be in C:\\Remotebeat.test");
+    Console.WriteLine("FTP test completed! Files should be in /");
 }
 catch (Exception ex)
 {
