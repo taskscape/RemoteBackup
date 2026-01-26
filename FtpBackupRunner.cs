@@ -165,7 +165,7 @@ public class FtpBackupRunner(ILogger<FtpBackupRunner> logger)
         }
     }
 
-    private static void CopyDirectory(
+    public static void CopyDirectory(
         string sourceDir,
         string targetDir,
         CancellationToken cancellationToken)
