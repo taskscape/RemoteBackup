@@ -6,7 +6,7 @@ var backupOptions = builder.Configuration.GetSection("BackupOptions").Get<Backup
 
     if (!backupOptions.Backups.Any())
     {
-        Console.WriteLine("Nie znaleziono backupów w konfiguracji!");
+        Console.WriteLine("No backups found in configuration!fr55");
         return; 
     }
 
@@ -46,7 +46,7 @@ ServiceScheduler.StartServiceAtConfiguredTime(starHour, startMinute, () =>
 var host = builder.Build();
 
 var logger = host.Services.GetRequiredService<ILogger<FtpBackupRunner>>();
-// FtpBackupRunner: kopiuje pliki z serwera FTP na lokalny dysk
+
 var ftpRunner = new FtpBackupRunner(logger);
 
 try

@@ -1,5 +1,6 @@
 using FluentFTP;
 using System.Globalization;
+using System.IO.Compression;
 
 namespace BackupService;
 
@@ -104,6 +105,28 @@ public class FtpBackupRunner(ILogger<FtpBackupRunner> logger)
 
         CopyDirectory(currentRoot, snapshotPath, cancellationToken);
         CleanupHistory(historyRoot, job, options);
+        
+        string currentDir = Path.Combine(job.LocalPath, "current");
+        Directory.CreateDirectory(currentDir);
+        
+        string archiveDir = Path.Combine(job.LocalPath, "archives", job.Name);
+        Directory.CreateDirectory(archiveDir);
+        
+        string zipPath = Path.Combine(archiveDir, DateTime.Now.ToString("yyyy-MM-dd") + ".zip");
+        if (File.Exists(zipPath))
+        {
+            File.Delete(zipPath); 
+        }
+        ZipFile.CreateFromDirectory(currentDir, zipPath, CompressionLevel.Optimal, includeBaseDirectory: false);
+        
+        foreach (var file in Directory.GetFiles(archiveDir, "*.zip"))
+        {
+            var creationDate = File.GetCreationTime(file);
+            if ((DateTime.Now - creationDate).TotalDays > job.RetentionDays)
+                File.Delete(file);
+        }
+        
+        Directory.Delete(currentDir, recursive: true);
     }
 
     private static bool IsLocalDrivePath(string path)

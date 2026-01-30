@@ -14,4 +14,5 @@ public class BackupJobOptions
     public bool AllowInvalidCertificate { get; set; }
     public int? TimeoutMinutes { get; set; }
     public int? HistoryCopies { get; set; }
+    public int RetentionDays { get; set; } = 7;
 }
