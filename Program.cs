@@ -6,7 +6,7 @@ var backupOptions = builder.Configuration.GetSection("BackupOptions").Get<Backup
 
     if (!backupOptions.Backups.Any())
     {
-        Console.WriteLine("No backups found in configuration!fr55");
+        Console.WriteLine("Nie znaleziono backupów w konfiguracji!");
         return; 
     }
 
