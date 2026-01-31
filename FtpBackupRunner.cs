@@ -1,5 +1,8 @@
 using FluentFTP;
 using System.Globalization;
+using System.IO.Compression;
+using System.Net;
+
 
 namespace BackupService;
 
@@ -10,103 +13,172 @@ public class FtpBackupRunner(ILogger<FtpBackupRunner> logger)
         BackupOptions options,
         CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(job.Host))
+        using var completionCts =
+            new CancellationTokenSource(TimeSpan.FromMinutes(job.CompletionTimeoutMinutes));
+
+        using var linkedCts =
+            CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken,
+                completionCts.Token);
+
+        var completionToken = linkedCts.Token;
+
+        try
         {
-            logger.LogError("Backup '{name}' is missing Host.", job.Name);
-            return;
-        }
 
-        if (string.IsNullOrWhiteSpace(job.LocalPath))
-        {
-            logger.LogError("Backup '{name}' is missing LocalPath.", job.Name);
-            return;
-        }
-
-        if (!IsLocalDrivePath(job.LocalPath))
-        {
-            logger.LogError(
-                "Backup '{name}' LocalPath '{path}' is not a local drive path.",
-                job.Name,
-                job.LocalPath);
-            return;
-        }
-
-        var currentRoot = Path.Combine(
-            job.LocalPath,
-            options.CurrentSubdirectoryName);
-        var historyRoot = Path.Combine(
-            job.LocalPath,
-            options.HistorySubdirectoryName);
-
-        Directory.CreateDirectory(currentRoot);
-        Directory.CreateDirectory(historyRoot);
-
-        using var client = new FtpClient(job.Host, job.Username, job.Password, job.Port);
-
-        client.Config.EncryptionMode = ParseEncryptionMode(job.Encryption);
-        client.Config.DataConnectionType = job.Passive
-            ? FtpDataConnectionType.PASV
-            : FtpDataConnectionType.PORT;
-        client.Config.DataConnectionEncryption = true;
-        client.Config.ConnectTimeout = 15000;
-        client.Config.ReadTimeout = 15000;
-        client.Config.DataConnectionConnectTimeout = 15000;
-        client.Config.DataConnectionReadTimeout = 15000;
-        client.Config.ValidateAnyCertificate = job.AllowInvalidCertificate;
-
-        if (!job.AllowInvalidCertificate)
-        {
-            client.ValidateCertificate += (_, e) =>
+            if (string.IsNullOrWhiteSpace(job.Host))
             {
-                if (e.PolicyErrors != System.Net.Security.SslPolicyErrors.None)
+                logger.LogError("Backup '{name}' is missing Host.", job.Name);
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(job.LocalPath))
+            {
+                logger.LogError("Backup '{name}' is missing LocalPath.", job.Name);
+                return;
+            }
+
+            if (!IsLocalDrivePath(job.LocalPath))
+            {
+                logger.LogError(
+                    "Backup '{name}' LocalPath '{path}' is not a local drive path.",
+                    job.Name,
+                    job.LocalPath);
+                return;
+            }
+
+            var currentRoot = Path.Combine(
+                job.LocalPath,
+                options.CurrentSubdirectoryName);
+            var historyRoot = Path.Combine(
+                job.LocalPath,
+                options.HistorySubdirectoryName);
+
+            Directory.CreateDirectory(currentRoot);
+            Directory.CreateDirectory(historyRoot);
+
+            using var client = new FtpClient(job.Host, job.Username, job.Password, job.Port);
+
+            client.Config.EncryptionMode = ParseEncryptionMode(job.Encryption);
+            client.Config.DataConnectionType = job.Passive
+                ? FtpDataConnectionType.PASV
+                : FtpDataConnectionType.PORT;
+            client.Config.DataConnectionEncryption = true;
+            client.Config.ConnectTimeout = 15000;
+            client.Config.ReadTimeout = 15000;
+            client.Config.DataConnectionConnectTimeout = 15000;
+            client.Config.DataConnectionReadTimeout = 15000;
+            client.Config.ValidateAnyCertificate = job.AllowInvalidCertificate;
+
+            if (!job.AllowInvalidCertificate)
+            {
+                client.ValidateCertificate += (_, e) =>
                 {
-                    logger.LogError(
-                        "Certificate validation failed for backup '{name}': {errors}",
-                        job.Name,
-                        e.PolicyErrors);
-                }
-            };
+                    if (e.PolicyErrors != System.Net.Security.SslPolicyErrors.None)
+                    {
+                        logger.LogError(
+                            "Certificate validation failed for backup '{name}': {errors}",
+                            job.Name,
+                            e.PolicyErrors);
+                    }
+                };
+            }
+
+            var remotePath = string.IsNullOrWhiteSpace(job.RemotePath)
+                ? "/"
+                : job.RemotePath;
+
+            logger.LogInformation(
+                "Connecting to {host}:{port} for backup '{name}'.",
+                job.Host,
+                job.Port,
+                job.Name);
+
+            client.Connect();
+            logger.LogInformation(
+                "Connected to {host}. Starting mirror of {remotePath}.",
+                job.Host,
+                remotePath);
+
+            var results = client.DownloadDirectory(
+                currentRoot,
+                remotePath,
+                FtpFolderSyncMode.Mirror,
+                FtpLocalExists.Overwrite,
+                FtpVerify.None);
+
+            LogResults(job.Name, results);
+
+            var snapshotName = DateTimeOffset.Now
+                .ToString("yyyyMMdd_HHmmss", CultureInfo.InvariantCulture);
+            var snapshotPath = Path.Combine(historyRoot, snapshotName);
+
+            logger.LogInformation(
+                "Creating history snapshot for backup '{name}' at {path}.",
+                job.Name,
+                snapshotPath);
+
+
+            CopyDirectory(currentRoot, snapshotPath, completionToken);
+            CleanupHistory(historyRoot, job, options);
+            
+            string currentDir = Path.Combine(job.LocalPath, "current");
+            Directory.CreateDirectory(currentDir);
+            
+            CopyDirectory(snapshotPath, currentDir, completionToken);
+
+            string archiveDir = Path.Combine(job.LocalPath, "archives", job.Name);
+            Directory.CreateDirectory(archiveDir);
+
+            string zipPath = Path.Combine(archiveDir, DateTime.Now.ToString("yyyy-MM-dd") + ".zip");
+
+            if (File.Exists(zipPath))
+            {
+                File.Delete(zipPath);
+            }
+
+            ZipFile.CreateFromDirectory(currentDir, zipPath, CompressionLevel.Optimal, includeBaseDirectory: false);
+
+            foreach (var file in Directory.GetFiles(archiveDir, "*.zip"))
+            {
+                var creationDate = File.GetCreationTime(file);
+                if ((DateTime.Now - creationDate).TotalDays > job.RetentionDays)
+                    File.Delete(file);
+            }
+
+            foreach (var file in Directory.GetFiles(currentDir))
+                File.Delete(file);
+
+            foreach (var dir in Directory.GetDirectories(currentDir))
+                Directory.Delete(dir, recursive: true);
+            
+            using var operationCts = new CancellationTokenSource(TimeSpan.FromMinutes(job.OperationTimeoutMinutes));
+            using var opLinkedCts = CancellationTokenSource.CreateLinkedTokenSource(completionToken, operationCts.Token);
+
+            string host = job.Host;
+            string username = job.Username;
+            string password = job.Password;
+            var ftpClient = new FtpClient();
+            ftpClient.Host = host;
+            ftpClient.Credentials = new NetworkCredential(username, password);
+            ftpClient.Connect();
+            
+            string localPath = Path.Combine(job.LocalPath, "current");
+            ftpClient.DownloadDirectory(remotePath, localPath);
+            ftpClient.Disconnect();
+        }   
+        catch (OperationCanceledException)
+        {
+            logger.LogWarning("Backup '{name}' cancelled.", job.Name);
         }
-
-        var remotePath = string.IsNullOrWhiteSpace(job.RemotePath)
-            ? "/"
-            : job.RemotePath;
-
-        logger.LogInformation(
-            "Connecting to {host}:{port} for backup '{name}'.",
-            job.Host,
-            job.Port,
-            job.Name);
-
-        client.Connect();
-        logger.LogInformation(
-            "Connected to {host}. Starting mirror of {remotePath}.",
-            job.Host,
-            remotePath);
-
-        var results = client.DownloadDirectory(
-            currentRoot,
-            remotePath,
-            FtpFolderSyncMode.Mirror,
-            FtpLocalExists.Overwrite,
-            FtpVerify.None);
-
-        LogResults(job.Name, results);
-
-        var snapshotName = DateTimeOffset.Now
-            .ToString("yyyyMMdd_HHmmss", CultureInfo.InvariantCulture);
-        var snapshotPath = Path.Combine(historyRoot, snapshotName);
-
-        logger.LogInformation(
-            "Creating history snapshot for backup '{name}' at {path}.",
-            job.Name,
-            snapshotPath);
-
-        CopyDirectory(currentRoot, snapshotPath, cancellationToken);
-        CleanupHistory(historyRoot, job, options);
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Backup '{name}' failed.", job.Name);
+        }
     }
 
-    private static bool IsLocalDrivePath(string path)
+
+private static bool IsLocalDrivePath(string path)
     {
         if (!Path.IsPathRooted(path))
         {
@@ -165,7 +237,7 @@ public class FtpBackupRunner(ILogger<FtpBackupRunner> logger)
         }
     }
 
-    public static void CopyDirectory(
+    public static async Task CopyDirectory(
         string sourceDir,
         string targetDir,
         CancellationToken cancellationToken)
@@ -184,7 +256,9 @@ public class FtpBackupRunner(ILogger<FtpBackupRunner> logger)
             cancellationToken.ThrowIfCancellationRequested();
             var directoryName = Path.GetFileName(directory);
             var targetSubdir = Path.Combine(targetDir, directoryName);
-            CopyDirectory(directory, targetSubdir, cancellationToken);
+            //CopyDirectory(directory, targetSubdir, cancellationToken);
+            await CopyDirectory(directory, targetSubdir, cancellationToken);
+            
         }
     }
 
