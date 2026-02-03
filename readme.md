@@ -1,8 +1,8 @@
 # BackupService
 
-Windows service for scheduled FTPS backups. It mirrors a remote FTP folder
-to a local drive path nightly at 02:00 and keeps the five most recent
-timestamped snapshots.
+Windows service for scheduled FTP/FTPS backups. It mirrors a remote FTP
+folder to a local drive path on a daily schedule, keeps timestamped
+snapshots, and produces daily zip archives.
 
 ## Requirements
 
@@ -15,7 +15,7 @@ timestamped snapshots.
 1. Build and publish the service:
 
 ```powershell
-dotnet publish .\BackupService\BackupService.csproj -c Release -o C:\Services\BackupService
+dotnet publish .\BackupService.csproj -c Release -o C:\Services\BackupService
 ```
 
 2. Create the Windows service:
@@ -38,9 +38,9 @@ sc.exe start BackupService
 
 ## Configuration
 
-Edit `BackupService\appsettings.json` (development) or provide a matching
+Edit `appsettings.json` (development) or provide a matching
 `appsettings.json` alongside the published executable. The important
-sections are `BackupOptions` and `FileLogging`.
+sections are `BackupOptions`, `FileLogging`, and `ServiceSettings`.
 
 Key settings:
 
@@ -48,18 +48,26 @@ Key settings:
 - `BackupOptions:DefaultTimeoutMinutes`: per-job timeout (default `60`).
 - `BackupOptions:HistoryCopies`: number of snapshots kept (default `5`).
 - `BackupOptions:Backups`: list of backup jobs.
+- `ServiceSettings:StartHour` / `ServiceSettings:StartMinute`: currently
+  used by a startup timer that logs when the service would start; actual
+  scheduling uses `BackupOptions:RunAt`.
 
 Each backup job supports:
 
 - `Name`: friendly name for logs.
 - `Host`, `Port`, `Username`, `Password`: FTP server credentials.
 - `RemotePath`: remote folder to mirror.
-- `LocalPath`: local drive folder to store the mirror and snapshots.
+- `LocalPath`: local drive folder to store the mirror, snapshots, and archives.
 - `Encryption`: `Explicit` or `Implicit` (default `Explicit`).
 - `Passive`: `true` for passive mode (default `true`).
 - `AllowInvalidCertificate`: set `true` to skip TLS validation.
 - `TimeoutMinutes`: overrides the default timeout.
 - `HistoryCopies`: overrides the default retention count.
+- `RetentionDays`: days to keep zip archives (default `7`).
+- `OperationTimeoutMinutes`: timeout for the final post-archive FTP
+  download (default `10`).
+- `CompletionTimeoutMinutes`: overall per-job timeout for copy/archive
+  work (default `180`).
 
 Example:
 
@@ -88,9 +96,16 @@ Example:
         "Passive": true,
         "AllowInvalidCertificate": false,
         "TimeoutMinutes": 60,
-        "HistoryCopies": 5
+        "HistoryCopies": 5,
+        "RetentionDays": 7,
+        "OperationTimeoutMinutes": 10,
+        "CompletionTimeoutMinutes": 180
       }
     ]
+  },
+  "ServiceSettings": {
+    "StartHour": 2,
+    "StartMinute": 0
   }
 }
 ```
@@ -108,20 +123,28 @@ $env:BackupOptions__Backups__0__Password = "password"
 
 ## Running behavior
 
+- On startup, the service performs a one-off FTP test run using the first
+  configured backup job and writes progress to the console.
 - The service runs once per day at the configured time.
 - Backups execute sequentially; a failure does not block the next job.
 - Each job is cancelled if it exceeds its timeout.
 - The remote path is mirrored into `LocalPath\current`.
 - Snapshot copies are stored in `LocalPath\_history\yyyyMMdd_HHmmss`.
+- A daily zip archive is created at
+  `LocalPath\archives\<JobName>\yyyy-MM-dd.zip`, and archives older than
+  `RetentionDays` are deleted.
 - Logs are written to the Windows Event Log and to the file path in
   `FileLogging:Path`.
+  
+Note: `LocalPath` must be a local drive path (for example `D:\Backups\SiteA`);
+UNC paths are rejected by the runner.
 
 ## Running locally (console mode)
 
 You can run the worker as a console app for quick testing:
 
 ```powershell
-dotnet run --project .\BackupService\BackupService.csproj
+dotnet run --project .\BackupService.csproj
 ```
 
 Press Ctrl+C to stop it.
