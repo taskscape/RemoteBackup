@@ -47,15 +47,12 @@ public class FtpBackupRunner(ILogger<FtpBackupRunner> logger)
                 return;
             }
 
-            var currentRoot = Path.Combine(
-                job.LocalPath,
-                options.CurrentSubdirectoryName);
-            var historyRoot = Path.Combine(
-                job.LocalPath,
-                options.HistorySubdirectoryName);
-
-            Directory.CreateDirectory(currentRoot);
-            Directory.CreateDirectory(historyRoot);
+            var tempDir = Path.Combine(job.LocalPath, "temp", job.Host);
+            Directory.CreateDirectory(tempDir);
+            
+            var archiveDir = Path.Combine(job.LocalPath, job.Host);
+            Directory.CreateDirectory(archiveDir);
+            
 
             using var client = new FtpClient(job.Host, job.Username, job.Password, job.Port);
 
@@ -101,34 +98,13 @@ public class FtpBackupRunner(ILogger<FtpBackupRunner> logger)
                 remotePath);
 
             var results = client.DownloadDirectory(
-                currentRoot,
+                tempDir,
                 remotePath,
                 FtpFolderSyncMode.Mirror,
                 FtpLocalExists.Overwrite,
                 FtpVerify.None);
 
             LogResults(job.Name, results);
-
-            var snapshotName = DateTimeOffset.Now
-                .ToString("yyyyMMdd_HHmmss", CultureInfo.InvariantCulture);
-            var snapshotPath = Path.Combine(historyRoot, snapshotName);
-
-            logger.LogInformation(
-                "Creating history snapshot for backup '{name}' at {path}.",
-                job.Name,
-                snapshotPath);
-
-
-            CopyDirectory(currentRoot, snapshotPath, completionToken);
-            CleanupHistory(historyRoot, job, options);
-            
-            string currentDir = Path.Combine(job.LocalPath, "current");
-            Directory.CreateDirectory(currentDir);
-            
-            CopyDirectory(snapshotPath, currentDir, completionToken);
-
-            string archiveDir = Path.Combine(job.LocalPath, "archives", job.Name);
-            Directory.CreateDirectory(archiveDir);
 
             string zipPath = Path.Combine(archiveDir, DateTime.Now.ToString("yyyy-MM-dd") + ".zip");
 
@@ -137,7 +113,7 @@ public class FtpBackupRunner(ILogger<FtpBackupRunner> logger)
                 File.Delete(zipPath);
             }
 
-            ZipFile.CreateFromDirectory(currentDir, zipPath, CompressionLevel.Optimal, includeBaseDirectory: false);
+            ZipFile.CreateFromDirectory(tempDir, zipPath, CompressionLevel.Optimal, includeBaseDirectory: false);
 
             foreach (var file in Directory.GetFiles(archiveDir, "*.zip"))
             {
@@ -145,27 +121,11 @@ public class FtpBackupRunner(ILogger<FtpBackupRunner> logger)
                 if ((DateTime.Now - creationDate).TotalDays > job.RetentionDays)
                     File.Delete(file);
             }
-
-            foreach (var file in Directory.GetFiles(currentDir))
-                File.Delete(file);
-
-            foreach (var dir in Directory.GetDirectories(currentDir))
-                Directory.Delete(dir, recursive: true);
             
-            using var operationCts = new CancellationTokenSource(TimeSpan.FromMinutes(job.OperationTimeoutMinutes));
-            using var opLinkedCts = CancellationTokenSource.CreateLinkedTokenSource(completionToken, operationCts.Token);
-
-            string host = job.Host;
-            string username = job.Username;
-            string password = job.Password;
-            var ftpClient = new FtpClient();
-            ftpClient.Host = host;
-            ftpClient.Credentials = new NetworkCredential(username, password);
-            ftpClient.Connect();
-            
-            string localPath = Path.Combine(job.LocalPath, "current");
-            ftpClient.DownloadDirectory(remotePath, localPath);
-            ftpClient.Disconnect();
+            if (Directory.Exists(tempDir))
+            {
+                Directory.Delete(tempDir, recursive: true);
+            }
         }   
         catch (OperationCanceledException)
         {
