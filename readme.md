@@ -1,8 +1,8 @@
 # BackupService
 
 Windows service for scheduled FTP/FTPS backups. It mirrors a remote FTP
-folder to a local drive path on a daily schedule, keeps timestamped
-snapshots, and produces daily zip archives.
+folder to a local drive path on a daily schedule and produces zip
+archives per run.
 
 ## Requirements
 
@@ -46,7 +46,8 @@ Key settings:
 
 - `BackupOptions:RunAt`: local time for daily run (default `02:00`).
 - `BackupOptions:DefaultTimeoutMinutes`: per-job timeout (default `60`).
-- `BackupOptions:HistoryCopies`: number of snapshots kept (default `5`).
+- `BackupOptions:HistoryCopies`: number of snapshots kept (currently
+  unused; kept for backwards compatibility).
 - `BackupOptions:Backups`: list of backup jobs.
 - `ServiceSettings:StartHour` / `ServiceSettings:StartMinute`: currently
   used by a startup timer that logs when the service would start; actual
@@ -57,7 +58,7 @@ Each backup job supports:
 - `Name`: friendly name for logs.
 - `Host`, `Port`, `Username`, `Password`: FTP server credentials.
 - `RemotePath`: remote folder to mirror.
-- `LocalPath`: local drive folder to store the mirror, snapshots, and archives.
+- `LocalPath`: local drive folder that will contain the archives folder.
 - `Encryption`: `Explicit` or `Implicit` (default `Explicit`).
 - `Passive`: `true` for passive mode (default `true`).
 - `AllowInvalidCertificate`: set `true` to skip TLS validation.
@@ -81,8 +82,6 @@ Example:
     "RunAt": "02:00",
     "HistoryCopies": 5,
     "DefaultTimeoutMinutes": 60,
-    "CurrentSubdirectoryName": "current",
-    "HistorySubdirectoryName": "_history",
     "Backups": [
       {
         "Name": "SiteA",
@@ -91,7 +90,7 @@ Example:
         "Username": "user",
         "Password": "password",
         "RemotePath": "/",
-        "LocalPath": "D:\\Backups\\SiteA",
+        "LocalPath": "D:\\Backups",
         "Encryption": "Explicit",
         "Passive": true,
         "AllowInvalidCertificate": false,
@@ -128,15 +127,15 @@ $env:BackupOptions__Backups__0__Password = "password"
 - The service runs once per day at the configured time.
 - Backups execute sequentially; a failure does not block the next job.
 - Each job is cancelled if it exceeds its timeout.
-- The remote path is mirrored into `LocalPath\current`.
-- Snapshot copies are stored in `LocalPath\_history\yyyyMMdd_HHmmss`.
-- A daily zip archive is created at
-  `LocalPath\archives\<JobName>\yyyy-MM-dd.zip`, and archives older than
+- The remote path is downloaded into a temp folder during the run and
+  removed after archiving; no unzipped copies remain.
+- Each run creates an archive at
+  `LocalPath\archives\<JobName>\yyyyMMdd_HHmm.zip`; archives older than
   `RetentionDays` are deleted.
 - Logs are written to the Windows Event Log and to the file path in
   `FileLogging:Path`.
   
-Note: `LocalPath` must be a local drive path (for example `D:\Backups\SiteA`);
+Note: `LocalPath` must be a local drive path (for example `D:\Backups`);
 UNC paths are rejected by the runner.
 
 ## Running locally (console mode)

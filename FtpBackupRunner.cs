@@ -1,5 +1,4 @@
 using FluentFTP;
-using System.Globalization;
 using System.IO.Compression;
 using System.Net;
 
@@ -47,10 +46,10 @@ public class FtpBackupRunner(ILogger<FtpBackupRunner> logger)
                 return;
             }
 
-            var tempDir = Path.Combine(job.LocalPath, "temp", job.Host);
+            var tempDir = Path.Combine(job.LocalPath, "temp", job.Name);
             Directory.CreateDirectory(tempDir);
-            
-            var archiveDir = Path.Combine(job.LocalPath, job.Host);
+
+            var archiveDir = Path.Combine(job.LocalPath, "archives", job.Name);
             Directory.CreateDirectory(archiveDir);
             
 
@@ -106,7 +105,8 @@ public class FtpBackupRunner(ILogger<FtpBackupRunner> logger)
 
             LogResults(job.Name, results);
 
-            string zipPath = Path.Combine(archiveDir, DateTime.Now.ToString("yyyy-MM-dd") + ".zip");
+            var timestamp = DateTime.Now;
+            var zipPath = Path.Combine(archiveDir, timestamp.ToString("yyyyMMdd_HHmm") + ".zip");
 
             if (File.Exists(zipPath))
             {
@@ -114,12 +114,25 @@ public class FtpBackupRunner(ILogger<FtpBackupRunner> logger)
             }
 
             ZipFile.CreateFromDirectory(tempDir, zipPath, CompressionLevel.Optimal, includeBaseDirectory: false);
+            logger.LogInformation(
+                "Backup '{name}' archived to {zipPath}.",
+                job.Name,
+                zipPath);
 
-            foreach (var file in Directory.GetFiles(archiveDir, "*.zip"))
+            if (job.RetentionDays > 0)
             {
-                var creationDate = File.GetCreationTime(file);
-                if ((DateTime.Now - creationDate).TotalDays > job.RetentionDays)
-                    File.Delete(file);
+                foreach (var file in Directory.GetFiles(archiveDir, "*.zip"))
+                {
+                    var creationDate = File.GetCreationTime(file);
+                    if ((timestamp - creationDate).TotalDays > job.RetentionDays)
+                    {
+                        File.Delete(file);
+                        logger.LogInformation(
+                            "Deleted expired archive {archive} for backup '{name}'.",
+                            file,
+                            job.Name);
+                    }
+                }
             }
             
             if (Directory.Exists(tempDir))
@@ -137,8 +150,7 @@ public class FtpBackupRunner(ILogger<FtpBackupRunner> logger)
         }
     }
 
-
-private static bool IsLocalDrivePath(string path)
+    private static bool IsLocalDrivePath(string path)
     {
         if (!Path.IsPathRooted(path))
         {
