@@ -2,7 +2,7 @@ using FluentFTP;
 using System.Globalization;
 using System.IO.Compression;
 using System.Net;
-
+using System.Linq; // <-- dodane, potrzebne do LINQ w ArchivesOnly
 
 namespace BackupService;
 
@@ -25,7 +25,6 @@ public class FtpBackupRunner(ILogger<FtpBackupRunner> logger)
 
         try
         {
-
             if (string.IsNullOrWhiteSpace(job.Host))
             {
                 logger.LogError("Backup '{name}' is missing Host.", job.Name);
@@ -47,12 +46,13 @@ public class FtpBackupRunner(ILogger<FtpBackupRunner> logger)
                 return;
             }
 
-            var tempDir = Path.Combine(job.LocalPath, "temp", job.Host);
-            Directory.CreateDirectory(tempDir);
-            
+            // katalogi wspólne dla obu trybów
             var archiveDir = Path.Combine(job.LocalPath, job.Host);
             Directory.CreateDirectory(archiveDir);
-            
+
+            var remotePath = string.IsNullOrWhiteSpace(job.RemotePath)
+                ? "/"
+                : job.RemotePath;
 
             using var client = new FtpClient(job.Host, job.Username, job.Password, job.Port);
 
@@ -81,10 +81,6 @@ public class FtpBackupRunner(ILogger<FtpBackupRunner> logger)
                 };
             }
 
-            var remotePath = string.IsNullOrWhiteSpace(job.RemotePath)
-                ? "/"
-                : job.RemotePath;
-
             logger.LogInformation(
                 "Connecting to {host}:{port} for backup '{name}'.",
                 job.Host,
@@ -93,40 +89,133 @@ public class FtpBackupRunner(ILogger<FtpBackupRunner> logger)
 
             client.Connect();
             logger.LogInformation(
-                "Connected to {host}. Starting mirror of {remotePath}.",
-                job.Host,
-                remotePath);
+                "Connected to {host}.",
+                job.Host);
 
-            var results = client.DownloadDirectory(
-                tempDir,
-                remotePath,
-                FtpFolderSyncMode.Mirror,
-                FtpLocalExists.Overwrite,
-                FtpVerify.None);
-
-            LogResults(job.Name, results);
-
-            string zipPath = Path.Combine(archiveDir, DateTime.Now.ToString("yyyy-MM-dd") + ".zip");
-
-            if (File.Exists(zipPath))
+            if (job.Mode == BackupMode.ArchivesOnly)
             {
-                File.Delete(zipPath);
+                // ====================== TRYB ARCHIVES ONLY ======================
+                logger.LogInformation(
+                    "ArchivesOnly mode: downloading only .zip files from {remotePath} for '{name}'.",
+                    remotePath,
+                    job.Name);
+
+                var listings = client.GetListing(remotePath);
+                var zipItems = listings
+                    .Where(i => i.Type == FtpObjectType.File &&
+                                i.Name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+                if (!zipItems.Any())
+                {
+                    logger.LogInformation(
+                        "No .zip files found in {remotePath} for backup '{name}'.",
+                        remotePath,
+                        job.Name);
+                }
+
+                int downloaded = 0;
+                int failed = 0;
+
+                foreach (var item in zipItems)
+                {
+                    completionToken.ThrowIfCancellationRequested();
+
+                    var localFile = Path.Combine(archiveDir, item.Name);
+
+                    logger.LogInformation(
+                        "Downloading archive {remoteName} to {localFile} for '{name}'.",
+                        item.Name,
+                        localFile,
+                        job.Name);
+
+                    var status = client.DownloadFile(
+                        localFile,
+                        item.FullName,
+                        FtpLocalExists.Overwrite,
+                        FtpVerify.None);
+
+                    if (status == FluentFTP.FtpStatus.Success)
+                    {
+                        downloaded++;
+
+                        if (item.Modified != DateTime.MinValue)
+                        {
+                            File.SetLastWriteTime(localFile, item.Modified);
+                            File.SetCreationTime(localFile, item.Modified);
+                        }
+
+                        logger.LogInformation("Successfully downloaded {name}.", item.Name);
+                    }
+                    else
+                    {
+                        failed++;
+                        logger.LogWarning("Failed to download {name}.", item.Name);
+                    }
+                }
+
+                logger.LogInformation(
+                    "ArchivesOnly backup completed for '{name}'. Downloaded {downloaded} archive(s), {failed} failed.",
+                    job.Name,
+                    downloaded,
+                    failed);
+            }
+            else
+            {
+                // ====================== TRYB FULL (dotychczasowa logika) ======================
+                var tempDir = Path.Combine(job.LocalPath, "temp", job.Host);
+                Directory.CreateDirectory(tempDir);
+
+                logger.LogInformation(
+                    "Full mode: mirroring {remotePath} to temp directory.",
+                    remotePath);
+
+                var results = client.DownloadDirectory(
+                    tempDir,
+                    remotePath,
+                    FtpFolderSyncMode.Mirror,
+                    FtpLocalExists.Overwrite,
+                    FtpVerify.None);
+
+                LogResults(job.Name, results);
+
+                string zipPath = Path.Combine(archiveDir, DateTime.Now.ToString("yyyy-MM-dd") + ".zip");
+
+                if (File.Exists(zipPath))
+                {
+                    File.Delete(zipPath);
+                }
+
+                ZipFile.CreateFromDirectory(tempDir, zipPath, CompressionLevel.Optimal, includeBaseDirectory: false);
+
+                if (Directory.Exists(tempDir))
+                {
+                    Directory.Delete(tempDir, recursive: true);
+                }
             }
 
-            ZipFile.CreateFromDirectory(tempDir, zipPath, CompressionLevel.Optimal, includeBaseDirectory: false);
-
+            // ====================== WSPÓLNY CLEANUP STARYCH ARCHIWÓW ======================
             foreach (var file in Directory.GetFiles(archiveDir, "*.zip"))
             {
                 var creationDate = File.GetCreationTime(file);
                 if ((DateTime.Now - creationDate).TotalDays > job.RetentionDays)
-                    File.Delete(file);
+                {
+                    try
+                    {
+                        File.Delete(file);
+                        logger.LogInformation(
+                            "Deleted old archive {file} (older than {days} days) for '{name}'.",
+                            Path.GetFileName(file),
+                            job.RetentionDays,
+                            job.Name);
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogWarning(ex, "Failed to delete old archive {file}.", file);
+                    }
+                }
             }
-            
-            if (Directory.Exists(tempDir))
-            {
-                Directory.Delete(tempDir, recursive: true);
-            }
-        }   
+        }
         catch (OperationCanceledException)
         {
             logger.LogWarning("Backup '{name}' cancelled.", job.Name);
@@ -137,8 +226,9 @@ public class FtpBackupRunner(ILogger<FtpBackupRunner> logger)
         }
     }
 
+    // ------------ reszta klasy bez zmian ------------
 
-private static bool IsLocalDrivePath(string path)
+    private static bool IsLocalDrivePath(string path)
     {
         if (!Path.IsPathRooted(path))
         {
@@ -216,9 +306,7 @@ private static bool IsLocalDrivePath(string path)
             cancellationToken.ThrowIfCancellationRequested();
             var directoryName = Path.GetFileName(directory);
             var targetSubdir = Path.Combine(targetDir, directoryName);
-            //CopyDirectory(directory, targetSubdir, cancellationToken);
             await CopyDirectory(directory, targetSubdir, cancellationToken);
-            
         }
     }
 
