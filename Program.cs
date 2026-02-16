@@ -12,6 +12,7 @@ var backupOptions = builder.Configuration.GetSection("BackupOptions").Get<Backup
 
 var backupJob = backupOptions.Backups.First();
 
+builder.Services.AddSingleton<ArchiveService>();
 builder.Services.Configure<BackupOptions>(
     builder.Configuration.GetSection(BackupOptions.SectionName));
 builder.Services.Configure<FileLoggerOptions>(
@@ -45,9 +46,7 @@ ServiceScheduler.StartServiceAtConfiguredTime(starHour, startMinute, () =>
 
 var host = builder.Build();
 
-var logger = host.Services.GetRequiredService<ILogger<FtpBackupRunner>>();
-
-var ftpRunner = new FtpBackupRunner(logger);
+var ftpRunner = host.Services.GetRequiredService<FtpBackupRunner>();
 
 try
 {

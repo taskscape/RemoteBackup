@@ -6,7 +6,7 @@ using System.Net;
 
 namespace BackupService;
 
-public class FtpBackupRunner(ILogger<FtpBackupRunner> logger)
+public class FtpBackupRunner(ILogger<FtpBackupRunner> logger, ArchiveService archiveService)
 {
     public async Task RunJobAsync(
         BackupJobOptions job,
@@ -108,20 +108,16 @@ public class FtpBackupRunner(ILogger<FtpBackupRunner> logger)
 
             string zipPath = Path.Combine(archiveDir, DateTime.Now.ToString("yyyy-MM-dd") + ".zip");
 
-            if (File.Exists(zipPath))
-            {
-                File.Delete(zipPath);
-            }
-
-            ZipFile.CreateFromDirectory(tempDir, zipPath, CompressionLevel.Optimal, includeBaseDirectory: false);
-
+          
             foreach (var file in Directory.GetFiles(archiveDir, "*.zip"))
             {
                 var creationDate = File.GetCreationTime(file);
                 if ((DateTime.Now - creationDate).TotalDays > job.RetentionDays)
                     File.Delete(file);
             }
-            
+
+            await archiveService.CompressDirectoryAsync(tempDir, zipPath, cancellationToken);
+
             if (Directory.Exists(tempDir))
             {
                 Directory.Delete(tempDir, recursive: true);
