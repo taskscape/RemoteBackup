@@ -68,6 +68,15 @@ Each backup job supports:
   download (default `10`).
 - `CompletionTimeoutMinutes`: overall per-job timeout for copy/archive
   work (default `180`).
+- `Mode`: backup mode: `Full`, `ArchivesOnly`, or `RemoteZip` (default `Full`).
+- `RemoteTriggerUrl`: optional HTTP endpoint to request server-side zipping
+  (used with `RemoteZip` mode). The endpoint should return a `Location`
+  URL (or JSON with `{"location":"..."}`) where the resulting archive
+  will be available for download.
+- `RemoteTriggerPollIntervalSeconds`: polling interval when waiting for remote
+  archive (default `5` seconds).
+- `RemoteTriggerTimeoutSeconds`: max seconds to wait for remote archive
+  after triggering (default `600` seconds).
 
 Example:
 
@@ -128,11 +137,16 @@ $env:BackupOptions__Backups__0__Password = "password"
 - The service runs once per day at the configured time.
 - Backups execute sequentially; a failure does not block the next job.
 - Each job is cancelled if it exceeds its timeout.
-- The remote path is mirrored into `LocalPath\current`.
-- Snapshot copies are stored in `LocalPath\_history\yyyyMMdd_HHmmss`.
-- A daily zip archive is created at
-  `LocalPath\archives\<JobName>\yyyy-MM-dd.zip`, and archives older than
-  `RetentionDays` are deleted.
+- **ArchivesOnly mode**: downloads only `.zip` files from the remote path
+  directly to `LocalPath`, preserving their original names.
+- **Full mode**: mirrors the entire remote directory to a temporary folder,
+  then creates a dated zip archive at `LocalPath\yyyy-MM-dd.zip`.
+ - **RemoteZip mode**: optionally POSTs to `RemoteTriggerUrl` to request a
+   server-side archive. If the trigger returns a download location the
+   service will poll and download that archive; otherwise it falls back to
+   checking for `.zip` files on the FTP server and then to `Full`.
+- Daily zip archives are stored directly in `LocalPath` with filenames
+  `yyyy-MM-dd.zip`, and archives older than `RetentionDays` are deleted.
 - Logs are written to the Windows Event Log and to the file path in
   `FileLogging:Path`.
   
