@@ -3,7 +3,8 @@ namespace BackupService;
 public enum BackupMode
 {
     Full,
-    ArchivesOnly
+    ArchivesOnly,
+    RemoteZip
 }
 
 public class BackupJobOptions
@@ -24,4 +25,9 @@ public class BackupJobOptions
     public int OperationTimeoutMinutes { get; set; } = 10;
     public int CompletionTimeoutMinutes { get; set; } = 180;
     public BackupMode Mode { get; set; } = BackupMode.Full;
+    public string? RemoteTriggerUrl { get; set; }
+
+    public int RemoteTriggerPollIntervalSeconds { get; set; } = 5;
+
+    public int RemoteTriggerTimeoutSeconds { get; set; } = 600;
 }
