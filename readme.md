@@ -178,3 +178,39 @@ sc.exe delete BackupService
   the specific backup or install a trusted certificate on the machine.
 - If Event Log entries do not appear, run the service once with elevated
   permissions or pre-create the event source.
+
+## Remote trigger endpoint (new)
+
+I added a minimal example endpoint that can be deployed on target servers to
+support the `RemoteZip` mode. The endpoint accepts a `POST /trigger` JSON
+body, starts a background job that creates a zip archive from a local folder,
+stores the archive under `wwwroot/archives/` and returns `202 Accepted` with
+the `Location` header set to `/archives/{filename}`. `FtpBackupRunner` can
+POST to this URL and poll for the archive using `HEAD` as implemented.
+
+Files added:
+- `RemoteTriggerEndpoint/RemoteTriggerEndpoint.csproj`
+- `RemoteTriggerEndpoint/Program.cs` (minimal API exposing `POST /trigger`)
+- `RemoteTriggerEndpoint/ZipWorker.cs` (background worker that creates ZIPs)
+
+Quick start (from repository root):
+
+```powershell
+dotnet run --project .\RemoteTriggerEndpoint -p:ASPNETCORE_URLS="http://0.0.0.0:5000"
+```
+
+Example `curl` to trigger zipping (run on the server or point `RemoteTriggerUrl` from the backup service to this server):
+
+```bash
+curl -X POST http://localhost:5000/trigger -H "Content-Type: application/json" \
+  -d '{"sourcePath":"C:\\path\\to\\data","archiveName":"siteA-backup.zip","overwrite":true}' -i
+```
+
+Response:
+- `202 Accepted` with `Location: /archives/siteA-backup.zip` — the background job is creating the archive.
+- `HEAD /archives/siteA-backup.zip` will return `200` when the file is ready; otherwise `404`.
+
+If you'd like, I can:
+- add authentication to the endpoint (API key / basic) for security,
+- add retention/cleanup for server-side archives, or
+- create a lightweight PowerShell script alternative instead of ASP.NET Core.
