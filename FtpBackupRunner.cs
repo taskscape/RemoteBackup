@@ -2,7 +2,9 @@ using FluentFTP;
 using System.Globalization;
 using System.IO.Compression;
 using System.Net;
-
+using System.Net.Http;
+using System.Text.Json;
+using System.Linq;
 
 namespace BackupService;
 
@@ -25,7 +27,6 @@ public class FtpBackupRunner(ILogger<FtpBackupRunner> logger)
 
         try
         {
-
             if (string.IsNullOrWhiteSpace(job.Host))
             {
                 logger.LogError("Backup '{name}' is missing Host.", job.Name);
@@ -47,12 +48,12 @@ public class FtpBackupRunner(ILogger<FtpBackupRunner> logger)
                 return;
             }
 
-            var tempDir = Path.Combine(job.LocalPath, "temp", job.Host);
-            Directory.CreateDirectory(tempDir);
-            
-            var archiveDir = Path.Combine(job.LocalPath, job.Host);
+            var archiveDir = job.LocalPath;
             Directory.CreateDirectory(archiveDir);
-            
+
+            var remotePath = string.IsNullOrWhiteSpace(job.RemotePath)
+                ? "/"
+                : job.RemotePath;
 
             using var client = new FtpClient(job.Host, job.Username, job.Password, job.Port);
 
@@ -81,10 +82,6 @@ public class FtpBackupRunner(ILogger<FtpBackupRunner> logger)
                 };
             }
 
-            var remotePath = string.IsNullOrWhiteSpace(job.RemotePath)
-                ? "/"
-                : job.RemotePath;
-
             logger.LogInformation(
                 "Connecting to {host}:{port} for backup '{name}'.",
                 job.Host,
@@ -93,40 +90,330 @@ public class FtpBackupRunner(ILogger<FtpBackupRunner> logger)
 
             client.Connect();
             logger.LogInformation(
-                "Connected to {host}. Starting mirror of {remotePath}.",
-                job.Host,
-                remotePath);
+                "Connected to {host}.",
+                job.Host);
 
-            var results = client.DownloadDirectory(
-                tempDir,
-                remotePath,
-                FtpFolderSyncMode.Mirror,
-                FtpLocalExists.Overwrite,
-                FtpVerify.None);
-
-            LogResults(job.Name, results);
-
-            string zipPath = Path.Combine(archiveDir, DateTime.Now.ToString("yyyy-MM-dd") + ".zip");
-
-            if (File.Exists(zipPath))
+            if (job.Mode == BackupMode.ArchivesOnly)
             {
-                File.Delete(zipPath);
-            }
+                logger.LogInformation(
+                    "ArchivesOnly mode: downloading only .zip files from {remotePath} for '{name}'.",
+                    remotePath,
+                    job.Name);
 
-            ZipFile.CreateFromDirectory(tempDir, zipPath, CompressionLevel.Optimal, includeBaseDirectory: false);
+                var listings = client.GetListing(remotePath);
+                var zipItems = listings
+                    .Where(i => i.Type == FtpObjectType.File &&
+                                i.Name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+                if (!zipItems.Any())
+                {
+                    logger.LogInformation(
+                        "No .zip files found in {remotePath} for backup '{name}'.",
+                        remotePath,
+                        job.Name);
+                }
+
+                int downloaded = 0;
+                int failed = 0;
+
+                foreach (var item in zipItems)
+                {
+                    completionToken.ThrowIfCancellationRequested();
+
+                    var localFile = Path.Combine(archiveDir, item.Name);
+
+                    logger.LogInformation(
+                        "Downloading archive {remoteName} to {localFile} for '{name}'.",
+                        item.Name,
+                        localFile,
+                        job.Name);
+
+                    var status = client.DownloadFile(
+                        localFile,
+                        item.FullName,
+                        FtpLocalExists.Overwrite,
+                        FtpVerify.None);
+
+                    if (status == FluentFTP.FtpStatus.Success)
+                    {
+                        downloaded++;
+
+                        if (item.Modified != DateTime.MinValue)
+                        {
+                            File.SetLastWriteTime(localFile, item.Modified);
+                            File.SetCreationTime(localFile, item.Modified);
+                        }
+
+                        logger.LogInformation("Successfully downloaded {name}.", item.Name);
+                    }
+                    else
+                    {
+                        failed++;
+                        logger.LogWarning("Failed to download {name}.", item.Name);
+                    }
+                }
+
+                logger.LogInformation(
+                    "ArchivesOnly backup completed for '{name}'. Downloaded {downloaded} archive(s), {failed} failed.",
+                    job.Name,
+                    downloaded,
+                    failed);
+            }
+            else if (job.Mode == BackupMode.RemoteZip)
+            {
+                logger.LogInformation(
+                    "RemoteZip mode: attempting remote zip trigger or downloading .zip from {remotePath} for '{name}'.",
+                    remotePath,
+                    job.Name);
+
+                var downloadedAny = false;
+
+                if (!string.IsNullOrWhiteSpace(job.RemoteTriggerUrl))
+                {
+                    try
+                    {
+                        using var http = new HttpClient();
+                        http.Timeout = TimeSpan.FromSeconds(Math.Max(30, Math.Min(job.RemoteTriggerTimeoutSeconds, 3600)));
+
+                        logger.LogInformation("Triggering remote zip at {url} for '{name}'.", job.RemoteTriggerUrl, job.Name);
+                        using var resp = await http.PostAsync(job.RemoteTriggerUrl, null, completionToken);
+
+                        string? location = resp.Headers.Location?.ToString();
+
+                        if (string.IsNullOrWhiteSpace(location))
+                        {
+                            try
+                            {
+                                var body = await resp.Content.ReadAsStringAsync(completionToken);
+                                if (!string.IsNullOrWhiteSpace(body))
+                                {
+                                    try
+                                    {
+                                        using var doc = JsonDocument.Parse(body);
+                                        if (doc.RootElement.TryGetProperty("location", out var locEl))
+                                        {
+                                            location = locEl.GetString();
+                                        }
+                                    }
+                                    catch
+                                    {
+                                        var trimmed = body.Trim();
+                                        if (Uri.IsWellFormedUriString(trimmed, UriKind.Absolute))
+                                        {
+                                            location = trimmed;
+                                        }
+                                    }
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                logger.LogWarning(ex, "Failed to read trigger response body.");
+                            }
+                        }
+
+                        if (!string.IsNullOrWhiteSpace(location))
+                        {
+                            logger.LogInformation("Polling {location} for archive availability.", location);
+                            var sw = System.Diagnostics.Stopwatch.StartNew();
+                            while (sw.Elapsed.TotalSeconds < job.RemoteTriggerTimeoutSeconds)
+                            {
+                                completionToken.ThrowIfCancellationRequested();
+
+                                try
+                                {
+                                    using var headReq = new HttpRequestMessage(HttpMethod.Head, location);
+                                    using var headResp = await http.SendAsync(headReq, completionToken);
+                                    if (headResp.IsSuccessStatusCode)
+                                    {
+                                        var uri = new Uri(location);
+                                        var fileName = Path.GetFileName(uri.LocalPath);
+                                        if (string.IsNullOrWhiteSpace(fileName))
+                                        {
+                                            fileName = DateTime.Now.ToString("yyyy-MM-dd") + ".zip";
+                                        }
+
+                                        var localFile = Path.Combine(archiveDir, fileName);
+                                        logger.LogInformation("Downloading remote archive {loc} to {localFile} for '{name}'.", location, localFile, job.Name);
+                                        using var getResp = await http.GetAsync(location, HttpCompletionOption.ResponseHeadersRead, completionToken);
+                                        getResp.EnsureSuccessStatusCode();
+                                        await using var stream = await getResp.Content.ReadAsStreamAsync(completionToken);
+                                        await using var fs = File.Create(localFile);
+                                        await stream.CopyToAsync(fs, cancellationToken: completionToken);
+
+                                        downloadedAny = true;
+                                        logger.LogInformation("Successfully downloaded remote archive {name}.", fileName);
+                                        break;
+                                    }
+                                }
+                                catch (OperationCanceledException) { throw; }
+                                catch (Exception) { /* ignore and retry */ }
+
+                                await Task.Delay(TimeSpan.FromSeconds(job.RemoteTriggerPollIntervalSeconds), completionToken);
+                            }
+                        }
+                    }
+                    catch (OperationCanceledException) { throw; }
+                    catch (Exception ex)
+                    {
+                        logger.LogWarning(ex, "Remote trigger failed for '{name}'.", job.Name);
+                    }
+                }
+
+                if (!downloadedAny)
+                {
+                    logger.LogInformation("RemoteZip: falling back to checking .zip files on FTP.");
+
+                    var listings = client.GetListing(remotePath);
+                    var zipItems = listings
+                        .Where(i => i.Type == FtpObjectType.File &&
+                                    i.Name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+                        .ToList();
+
+                    if (!zipItems.Any())
+                    {
+                        logger.LogInformation("No .zip files found in {remotePath} for backup '{name}'. Falling back to Full.", remotePath, job.Name);
+                    }
+                    else
+                    {
+                        int downloaded = 0;
+                        int failed = 0;
+
+                        foreach (var item in zipItems)
+                        {
+                            completionToken.ThrowIfCancellationRequested();
+
+                            var localFile = Path.Combine(archiveDir, item.Name);
+
+                            logger.LogInformation(
+                                "Downloading archive {remoteName} to {localFile} for '{name}'.",
+                                item.Name,
+                                localFile,
+                                job.Name);
+
+                            var status = client.DownloadFile(
+                                localFile,
+                                item.FullName,
+                                FtpLocalExists.Overwrite,
+                                FtpVerify.None);
+
+                            if (status == FluentFTP.FtpStatus.Success)
+                            {
+                                downloaded++;
+
+                                if (item.Modified != DateTime.MinValue)
+                                {
+                                    File.SetLastWriteTime(localFile, item.Modified);
+                                    File.SetCreationTime(localFile, item.Modified);
+                                }
+
+                                logger.LogInformation("Successfully downloaded {name}.", item.Name);
+                                downloadedAny = true;
+                            }
+                            else
+                            {
+                                failed++;
+                                logger.LogWarning("Failed to download {name}.", item.Name);
+                            }
+                        }
+
+                        logger.LogInformation(
+                            "RemoteZip (FTP) completed for '{name}'. Downloaded {downloaded} archive(s), {failed} failed.",
+                            job.Name,
+                            downloaded,
+                            failed);
+                    }
+                }
+
+                if (!downloadedAny)
+                {
+                    logger.LogInformation("RemoteZip: falling back to Full mode for '{name}'.", job.Name);
+
+                    var tempDir = Path.Combine(job.LocalPath, "temp", job.Host);
+                    Directory.CreateDirectory(tempDir);
+
+                    logger.LogInformation(
+                        "Full mode: mirroring {remotePath} to temp directory.",
+                        remotePath);
+
+                    var results = client.DownloadDirectory(
+                        tempDir,
+                        remotePath,
+                        FtpFolderSyncMode.Mirror,
+                        FtpLocalExists.Overwrite,
+                        FtpVerify.None);
+
+                    LogResults(job.Name, results);
+
+                    string zipPath = Path.Combine(archiveDir, DateTime.Now.ToString("yyyy-MM-dd") + ".zip");
+
+                    if (File.Exists(zipPath))
+                    {
+                        File.Delete(zipPath);
+                    }
+
+                    ZipFile.CreateFromDirectory(tempDir, zipPath, CompressionLevel.Optimal, includeBaseDirectory: false);
+
+                    if (Directory.Exists(tempDir))
+                    {
+                        Directory.Delete(tempDir, recursive: true);
+                    }
+                }
+            }
+            else
+            {
+                var tempDir = Path.Combine(job.LocalPath, "temp", job.Host);
+                Directory.CreateDirectory(tempDir);
+
+                logger.LogInformation(
+                    "Full mode: mirroring {remotePath} to temp directory.",
+                    remotePath);
+
+                var results = client.DownloadDirectory(
+                    tempDir,
+                    remotePath,
+                    FtpFolderSyncMode.Mirror,
+                    FtpLocalExists.Overwrite,
+                    FtpVerify.None);
+
+                LogResults(job.Name, results);
+
+                string zipPath = Path.Combine(archiveDir, DateTime.Now.ToString("yyyy-MM-dd") + ".zip");
+
+                if (File.Exists(zipPath))
+                {
+                    File.Delete(zipPath);
+                }
+
+                ZipFile.CreateFromDirectory(tempDir, zipPath, CompressionLevel.Optimal, includeBaseDirectory: false);
+
+                if (Directory.Exists(tempDir))
+                {
+                    Directory.Delete(tempDir, recursive: true);
+                }
+            }
 
             foreach (var file in Directory.GetFiles(archiveDir, "*.zip"))
             {
                 var creationDate = File.GetCreationTime(file);
                 if ((DateTime.Now - creationDate).TotalDays > job.RetentionDays)
-                    File.Delete(file);
+                {
+                    try
+                    {
+                        File.Delete(file);
+                        logger.LogInformation(
+                            "Deleted old archive {file} (older than {days} days) for '{name}'.",
+                            Path.GetFileName(file),
+                            job.RetentionDays,
+                            job.Name);
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogWarning(ex, "Failed to delete old archive {file}.", file);
+                    }
+                }
             }
-            
-            if (Directory.Exists(tempDir))
-            {
-                Directory.Delete(tempDir, recursive: true);
-            }
-        }   
+        }
         catch (OperationCanceledException)
         {
             logger.LogWarning("Backup '{name}' cancelled.", job.Name);
@@ -137,8 +424,7 @@ public class FtpBackupRunner(ILogger<FtpBackupRunner> logger)
         }
     }
 
-
-private static bool IsLocalDrivePath(string path)
+    private static bool IsLocalDrivePath(string path)
     {
         if (!Path.IsPathRooted(path))
         {
@@ -216,9 +502,7 @@ private static bool IsLocalDrivePath(string path)
             cancellationToken.ThrowIfCancellationRequested();
             var directoryName = Path.GetFileName(directory);
             var targetSubdir = Path.Combine(targetDir, directoryName);
-            //CopyDirectory(directory, targetSubdir, cancellationToken);
             await CopyDirectory(directory, targetSubdir, cancellationToken);
-            
         }
     }
 

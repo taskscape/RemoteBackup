@@ -68,6 +68,15 @@ Each backup job supports:
   download (default `10`).
 - `CompletionTimeoutMinutes`: overall per-job timeout for copy/archive
   work (default `180`).
+- `Mode`: backup mode: `Full`, `ArchivesOnly`, or `RemoteZip` (default `Full`).
+- `RemoteTriggerUrl`: optional HTTP endpoint to request server-side zipping
+  (used with `RemoteZip` mode). The endpoint should return a `Location`
+  URL (or JSON with `{"location":"..."}`) where the resulting archive
+  will be available for download.
+- `RemoteTriggerPollIntervalSeconds`: polling interval when waiting for remote
+  archive (default `5` seconds).
+- `RemoteTriggerTimeoutSeconds`: max seconds to wait for remote archive
+  after triggering (default `600` seconds).
 
 Example:
 
@@ -128,11 +137,16 @@ $env:BackupOptions__Backups__0__Password = "password"
 - The service runs once per day at the configured time.
 - Backups execute sequentially; a failure does not block the next job.
 - Each job is cancelled if it exceeds its timeout.
-- The remote path is mirrored into `LocalPath\current`.
-- Snapshot copies are stored in `LocalPath\_history\yyyyMMdd_HHmmss`.
-- A daily zip archive is created at
-  `LocalPath\archives\<JobName>\yyyy-MM-dd.zip`, and archives older than
-  `RetentionDays` are deleted.
+- **ArchivesOnly mode**: downloads only `.zip` files from the remote path
+  directly to `LocalPath`, preserving their original names.
+- **Full mode**: mirrors the entire remote directory to a temporary folder,
+  then creates a dated zip archive at `LocalPath\yyyy-MM-dd.zip`.
+ - **RemoteZip mode**: optionally POSTs to `RemoteTriggerUrl` to request a
+   server-side archive. If the trigger returns a download location the
+   service will poll and download that archive; otherwise it falls back to
+   checking for `.zip` files on the FTP server and then to `Full`.
+- Daily zip archives are stored directly in `LocalPath` with filenames
+  `yyyy-MM-dd.zip`, and archives older than `RetentionDays` are deleted.
 - Logs are written to the Windows Event Log and to the file path in
   `FileLogging:Path`.
   
@@ -164,3 +178,39 @@ sc.exe delete BackupService
   the specific backup or install a trusted certificate on the machine.
 - If Event Log entries do not appear, run the service once with elevated
   permissions or pre-create the event source.
+
+## Remote trigger endpoint (new)
+
+I added a minimal example endpoint that can be deployed on target servers to
+support the `RemoteZip` mode. The endpoint accepts a `POST /trigger` JSON
+body, starts a background job that creates a zip archive from a local folder,
+stores the archive under `wwwroot/archives/` and returns `202 Accepted` with
+the `Location` header set to `/archives/{filename}`. `FtpBackupRunner` can
+POST to this URL and poll for the archive using `HEAD` as implemented.
+
+Files added:
+- `RemoteTriggerEndpoint/RemoteTriggerEndpoint.csproj`
+- `RemoteTriggerEndpoint/Program.cs` (minimal API exposing `POST /trigger`)
+- `RemoteTriggerEndpoint/ZipWorker.cs` (background worker that creates ZIPs)
+
+Quick start (from repository root):
+
+```powershell
+dotnet run --project .\RemoteTriggerEndpoint -p:ASPNETCORE_URLS="http://0.0.0.0:5000"
+```
+
+Example `curl` to trigger zipping (run on the server or point `RemoteTriggerUrl` from the backup service to this server):
+
+```bash
+curl -X POST http://localhost:5000/trigger -H "Content-Type: application/json" \
+  -d '{"sourcePath":"C:\\path\\to\\data","archiveName":"siteA-backup.zip","overwrite":true}' -i
+```
+
+Response:
+- `202 Accepted` with `Location: /archives/siteA-backup.zip` — the background job is creating the archive.
+- `HEAD /archives/siteA-backup.zip` will return `200` when the file is ready; otherwise `404`.
+
+If you'd like, I can:
+- add authentication to the endpoint (API key / basic) for security,
+- add retention/cleanup for server-side archives, or
+- create a lightweight PowerShell script alternative instead of ASP.NET Core.
