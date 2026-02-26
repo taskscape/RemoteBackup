@@ -1,153 +1,119 @@
 # BackupService
 
-Windows service for scheduled FTP/FTPS backups. It mirrors a remote FTP
-folder to a local drive path on a daily schedule, keeps timestamped
-snapshots, and produces daily zip archives.
+Windows service for scheduled FTP/FTPS and HTTP/PHP backups. It mirrors remote
+files to a local drive path on a daily schedule, keeps timestamped
+snapshots, and produces daily archives.
+
+## Features
+
+- **FTP/FTPS Backup**: Classic file mirroring from FTP servers.
+- **HTTP/PHP Backup**: High-performance backup for large sites (thousands of files).
+  - Server-side ZIP compression (much faster than individual FTP downloads).
+  - Integrated MySQL database backup with table prefix support.
+  - Token-based security.
+  - Automatic cleanup of old archives on both server and local machine.
 
 ## Requirements
 
-- .NET SDK 10.0+
-- Windows machine with access to the remote FTP server
-- Local destination on a drive letter path (for example: `D:\Backups\SiteA`)
+- .NET SDK 10.0+ (for building)
+- Windows machine to run the service
+- (For HTTP mode) PHP 7.4+ on the remote server with `ZipArchive` and `mysqli` extensions.
 
 ## Installation
 
 1. Build and publish the service:
-
 ```powershell
 dotnet publish .\BackupService.csproj -c Release -o C:\Services\BackupService
 ```
 
 2. Create the Windows service:
-
 ```powershell
 sc.exe create BackupService binPath= "C:\Services\BackupService\BackupService.exe"
 ```
 
-3. (Optional) Set the service account if needed:
-
-```powershell
-sc.exe config BackupService obj= ".\ServiceUser" password= "YourPassword"
-```
-
-4. Start the service:
-
+3. Start the service:
 ```powershell
 sc.exe start BackupService
 ```
 
 ## Configuration
 
-Edit `appsettings.json` (development) or provide a matching
-`appsettings.json` alongside the published executable. The important
-sections are `BackupOptions`, `FileLogging`, and `ServiceSettings`.
+### 1. HTTP/PHP Mode (Recommended for Web Services)
 
-Key settings:
+This mode uses a PHP script on your server to bundle files and database into archives for the C# service to download.
 
-- `BackupOptions:RunAt`: local time for daily run (default `02:00`).
-- `BackupOptions:DefaultTimeoutMinutes`: per-job timeout (default `60`).
-- `BackupOptions:HistoryCopies`: number of snapshots kept (default `5`).
-- `BackupOptions:Backups`: list of backup jobs.
-- `ServiceSettings:StartHour` / `ServiceSettings:StartMinute`: currently
-  used by a startup timer that logs when the service would start; actual
-  scheduling uses `BackupOptions:RunAt`.
+#### Server Setup:
+1. Copy the contents of the `php-server/` folder to your website (e.g., to `/backup/`).
+2. Edit `php-server/config.php`:
+   - Set `auth_token` to a secure random string.
+   - Configure `db` section with your MySQL credentials.
+   - Adjust `fs -> source_dir` to point to your website root.
+   - Ensure `backup` folder is in `exclude_dirs`.
 
-Each backup job supports:
-
-- `Name`: friendly name for logs.
-- `Host`, `Port`, `Username`, `Password`: FTP server credentials.
-- `RemotePath`: remote folder to mirror.
-- `LocalPath`: local drive folder to store the mirror, snapshots, and archives.
-- `Encryption`: `Explicit` or `Implicit` (default `Explicit`).
-- `Passive`: `true` for passive mode (default `true`).
-- `AllowInvalidCertificate`: set `true` to skip TLS validation.
-- `TimeoutMinutes`: overrides the default timeout.
-- `HistoryCopies`: overrides the default retention count.
-- `RetentionDays`: days to keep zip archives (default `7`).
-- `OperationTimeoutMinutes`: timeout for the final post-archive FTP
-  download (default `10`).
-- `CompletionTimeoutMinutes`: overall per-job timeout for copy/archive
-  work (default `180`).
-
-Example:
-
+#### Client Setup (`appsettings.json`):
 ```json
 {
-  "FileLogging": {
-    "Path": "logs\\backup.log",
-    "MinimumLevel": "Information"
-  },
   "BackupOptions": {
-    "RunAt": "02:00",
-    "HistoryCopies": 5,
-    "DefaultTimeoutMinutes": 60,
-    "CurrentSubdirectoryName": "current",
-    "HistorySubdirectoryName": "_history",
     "Backups": [
       {
-        "Name": "SiteA",
-        "Host": "ftp.example.com",
-        "Port": 21,
-        "Username": "user",
-        "Password": "password",
-        "RemotePath": "/",
-        "LocalPath": "D:\\Backups\\SiteA",
-        "Encryption": "Explicit",
-        "Passive": true,
-        "AllowInvalidCertificate": false,
-        "TimeoutMinutes": 60,
-        "HistoryCopies": 5,
-        "RetentionDays": 7,
-        "OperationTimeoutMinutes": 10,
-        "CompletionTimeoutMinutes": 180
+        "Name": "MyWebsite",
+        "BackupType": "HTTP",
+        "EndpointUrl": "https://yourdomain.com/backup/php-server/backup.php",
+        "ApiToken": "your_secure_token",
+        "LocalPath": "C:\\Backups\\MyWebsite",
+        "RetentionDays": 7
       }
     ]
-  },
-  "ServiceSettings": {
-    "StartHour": 2,
-    "StartMinute": 0
   }
 }
 ```
 
-### Sensitive values
+### 2. FTP/FTPS Mode
 
-Passwords are stored in clear text in `appsettings.json`. For production
-use, consider setting credentials in environment variables and leaving
-the file values blank:
+Classic mode for servers without PHP support.
 
-```powershell
-$env:BackupOptions__Backups__0__Username = "user"
-$env:BackupOptions__Backups__0__Password = "password"
+```json
+{
+  "BackupOptions": {
+    "Backups": [
+      {
+        "Name": "LegacyFTPSite",
+        "BackupType": "FTP",
+        "Host": "ftp.example.com",
+        "Username": "user",
+        "Password": "password",
+        "RemotePath": "/",
+        "LocalPath": "C:\\Backups\\LegacySite",
+        "Encryption": "Explicit",
+        "Passive": true
+      }
+    ]
+  }
+}
 ```
 
-## Running behavior
+## Global Settings
 
-- On startup, the service performs a one-off FTP test run using the first
-  configured backup job and writes progress to the console.
-- The service runs once per day at the configured time.
-- Backups execute sequentially; a failure does not block the next job.
-- Each job is cancelled if it exceeds its timeout.
-- The remote path is mirrored into `LocalPath\current`.
-- Snapshot copies are stored in `LocalPath\_history\yyyyMMdd_HHmmss`.
-- A daily zip archive is created at
-  `LocalPath\archives\<JobName>\yyyy-MM-dd.zip`, and archives older than
-  `RetentionDays` are deleted.
-- Logs are written to the Windows Event Log and to the file path in
-  `FileLogging:Path`.
-  
-Note: `LocalPath` must be a local drive path (for example `D:\Backups\SiteA`);
-UNC paths are rejected by the runner.
+- `BackupOptions:RunAt`: Local time for daily run (e.g., `"02:00"`).
+- `BackupOptions:HistoryCopies`: Number of snapshots kept (for FTP mode).
+- `FileLogging:Path`: Location of service logs.
 
-## Running locally (console mode)
+## Running Behavior
 
-You can run the worker as a console app for quick testing:
+- **Immediate Test**: On startup, the service performs a test run of the **first** configured backup job.
+- **Scheduled Run**: The service runs once per day at the `RunAt` time.
+- **HTTP Flow**:
+  1. Requests DB backup (`?action=db`).
+  2. Downloads the generated `.sql` file.
+  3. Requests Files backup (`?action=files`).
+  4. Downloads the generated `.zip` archive.
+  5. Cleans up old local and remote archives.
 
-```powershell
-dotnet run --project .\BackupService.csproj
-```
+## Troubleshooting
 
-Press Ctrl+C to stop it.
+- **HTTP 500 Error**: Check if `ZipArchive` and `mysqli` extensions are enabled in your PHP configuration. Check `error_log` on the server.
+- **Unauthorized**: Ensure `ApiToken` in C# matches `auth_token` in `config.php`.
+- **Permission Denied**: Ensure the PHP script has write access to its `archives/` directory.
 
 ## Uninstall
 
@@ -155,12 +121,3 @@ Press Ctrl+C to stop it.
 sc.exe stop BackupService
 sc.exe delete BackupService
 ```
-
-## Troubleshooting
-
-- If the service cannot write logs, ensure the service account has write
-  access to the log directory and backup destination.
-- If TLS validation fails, set `AllowInvalidCertificate` to `true` for
-  the specific backup or install a trusted certificate on the machine.
-- If Event Log entries do not appear, run the service once with elevated
-  permissions or pre-create the event source.
