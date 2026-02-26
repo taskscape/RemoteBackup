@@ -18,6 +18,7 @@ builder.Services.Configure<FileLoggerOptions>(
     builder.Configuration.GetSection(FileLoggerOptions.SectionName));
 
 builder.Services.AddSingleton<FtpBackupRunner>();
+builder.Services.AddSingleton<HttpBackupRunner>();
 builder.Services.AddSingleton<BackupCoordinator>();
 builder.Services.AddHostedService<Worker>();
 
@@ -45,16 +46,22 @@ ServiceScheduler.StartServiceAtConfiguredTime(starHour, startMinute, () =>
 
 var host = builder.Build();
 
-var logger = host.Services.GetRequiredService<ILogger<FtpBackupRunner>>();
-
-var ftpRunner = new FtpBackupRunner(logger);
+var ftpRunner = host.Services.GetRequiredService<FtpBackupRunner>();
+var httpRunner = host.Services.GetRequiredService<HttpBackupRunner>();
 
 try
 {
-    Console.WriteLine("I'm starting a test of downloading files from FTP");
-    
-    await ftpRunner.RunJobAsync(backupJob, backupOptions, CancellationToken.None);
-    Console.WriteLine("FTP test completed!" );
+    if (backupJob.BackupType?.ToUpper() == "HTTP")
+    {
+        Console.WriteLine($"Starting HTTP backup test for '{backupJob.Name}'...");
+        await httpRunner.RunJobAsync(backupJob, backupOptions, CancellationToken.None);
+    }
+    else
+    {
+        Console.WriteLine($"Starting FTP backup test for '{backupJob.Name}'...");
+        await ftpRunner.RunJobAsync(backupJob, backupOptions, CancellationToken.None);
+    }
+    Console.WriteLine("Backup test completed!");
 }
 catch (Exception ex)
 {

@@ -5,7 +5,8 @@ namespace BackupService;
 public class BackupCoordinator(
     ILogger<BackupCoordinator> logger,
     IOptions<BackupOptions> options,
-    FtpBackupRunner runner)
+    FtpBackupRunner ftpRunner,
+    HttpBackupRunner httpRunner)
 {
     private readonly BackupOptions _options = options.Value;
 
@@ -28,13 +29,22 @@ public class BackupCoordinator(
 
             var started = DateTimeOffset.Now;
             logger.LogInformation(
-                "Starting backup '{name}' with timeout {timeoutMinutes} minutes.",
+                "Starting {type} backup '{name}' with timeout {timeoutMinutes} minutes.",
+                job.BackupType,
                 job.Name,
                 timeoutMinutes);
 
             try
             {
-                await runner.RunJobAsync(job, _options, linkedCts.Token);
+                if (job.BackupType?.ToUpper() == "HTTP")
+                {
+                    await httpRunner.RunJobAsync(job, _options, linkedCts.Token);
+                }
+                else
+                {
+                    await ftpRunner.RunJobAsync(job, _options, linkedCts.Token);
+                }
+
                 var duration = DateTimeOffset.Now - started;
                 logger.LogInformation(
                     "Backup '{name}' completed in {duration}.",
