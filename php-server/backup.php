@@ -4,15 +4,31 @@
  * Handles both Filesystem and Database backups.
  */
 
+// --- DEBUG MODE (Keep it for a moment) ---
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
+// ------------------
+
 header('Content-Type: application/json');
 set_time_limit(0);
 ini_set('memory_limit', '512M');
 
 $config = require 'config.php';
 
-// 1. Authentication
-$headers = getallheaders();
-$providedToken = $headers['X-Backup-Token'] ?? $_GET['token'] ?? null;
+// 1. Authentication (Safe way to get token)
+$providedToken = $_GET['token'] ?? null;
+
+// Fallback to headers if not in URL
+if (!$providedToken) {
+    $headers = [];
+    foreach ($_SERVER as $name => $value) {
+        if (substr($name, 0, 5) == 'HTTP_') {
+            $headers[str_replace(' ', '-', ucwords(strtolower(str_replace('_', ' ', substr($name, 5)))))] = $value;
+        }
+    }
+    $providedToken = $headers['X-Backup-Token'] ?? null;
+}
 
 if (!$providedToken || $providedToken !== $config['auth_token']) {
     http_response_code(403);
@@ -65,6 +81,11 @@ function handleFilesBackup($config) {
     $filename = 'fs_backup_' . $timestamp . '.zip';
     $outputPath = $config['backup_dir'] . '/' . $filename;
 
+    if (!class_exists('ZipArchive')) {
+        echo json_encode(['status' => 'error', 'message' => 'ZipArchive class not found. Enable ZIP extension in PHP.']);
+        return;
+    }
+
     $zip = new ZipArchive();
     if ($zip->open($outputPath, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== TRUE) {
         echo json_encode(['status' => 'error', 'message' => 'Could not create ZIP file']);
@@ -76,7 +97,6 @@ function handleFilesBackup($config) {
         return realpath($sourceDir . DIRECTORY_SEPARATOR . $d);
     }, $config['fs']['exclude_dirs']);
     
-    // Add backup_dir itself to exclusion to prevent recursive zipping
     $excludeDirs[] = realpath($config['backup_dir']);
 
     $files = new RecursiveIteratorIterator(
@@ -88,7 +108,6 @@ function handleFilesBackup($config) {
         $filePath = $file->getRealPath();
         $relativePath = substr($filePath, strlen($sourceDir) + 1);
 
-        // Check exclusions
         $shouldExclude = false;
         foreach ($excludeDirs as $exDir) {
             if ($exDir && strpos($filePath, $exDir) === 0) {
@@ -131,14 +150,16 @@ function handleDatabaseBackup($config) {
     $outputPath = $config['backup_dir'] . '/' . $filename;
 
     try {
+        if (!function_exists('mysqli_connect')) {
+            throw new Exception('mysqli extension not found. Enable mysqli in PHP.');
+        }
+
         mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
         $mysqli = new mysqli($dbCfg['host'], $dbCfg['user'], $dbCfg['pass'], $dbCfg['name']);
         $mysqli->set_charset("utf8mb4");
 
         $handle = fopen($outputPath, 'w+');
-        fwrite($handle, "-- Backup: " . date("Y-m-d H:i:s") . "
-
-");
+        fwrite($handle, "-- Backup: " . date("Y-m-d H:i:s") . "\n\n");
 
         $tables = [];
         if ($dbCfg['table_prefix'] === '*') {
@@ -153,21 +174,16 @@ function handleDatabaseBackup($config) {
 
         foreach ($tables as $table) {
             $createRes = $mysqli->query("SHOW CREATE TABLE `$table`")->fetch_row();
-            fwrite($handle, "DROP TABLE IF EXISTS `$table`;
-" . $createRes[1] . ";
-
-");
+            fwrite($handle, "DROP TABLE IF EXISTS `$table`;\n" . $createRes[1] . ";\n\n");
 
             $dataRes = $mysqli->query("SELECT * FROM `$table`", MYSQLI_USE_RESULT);
             while ($row = $dataRes->fetch_assoc()) {
                 $vals = array_map(function($v) use ($mysqli) {
                     return is_null($v) ? "NULL" : "'" . $mysqli->real_escape_string($v) . "'";
                 }, $row);
-                fwrite($handle, "INSERT INTO `$table` VALUES (" . implode(', ', $vals) . ");
-");
+                fwrite($handle, "INSERT INTO `$table` VALUES (" . implode(', ', $vals) . ");\n");
             }
-            fwrite($handle, "
-");
+            fwrite($handle, "\n");
         }
 
         fclose($handle);
@@ -189,19 +205,5 @@ function getDownloadUrl($filename) {
     $protocol = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 'https' : 'http';
     $host = $_SERVER['HTTP_HOST'];
     $uri = dirname($_SERVER['REQUEST_URI']);
-    // Assuming 'archives' is accessible via HTTP
     return "$protocol://$host$uri/archives/$filename";
-}
-
-function getallheaders() {
-    if (!function_exists('getallheaders')) {
-        $headers = [];
-        foreach ($_SERVER as $name => $value) {
-            if (substr($name, 0, 5) == 'HTTP_') {
-                $headers[str_replace(' ', '-', ucwords(strtolower(str_replace('_', ' ', substr($name, 5)))))] = $value;
-            }
-        }
-        return $headers;
-    }
-    return \getallheaders();
 }
