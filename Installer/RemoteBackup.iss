@@ -1,6 +1,5 @@
 #define AppName "RemoteBackup Service"
-#define AppPublisher "RemoteBackup Team"
-#define AppURL "https://github.com/skuziora/RemoteBackup"
+#define AppPublisher "Taskscape Ltd"
 #define AppExeName "BackupService.exe"
 #define ServiceName "BackupService"
 
@@ -14,9 +13,6 @@ AppId={{D0E7B26C-B234-4A82-841F-43C3A3311E6A}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppPublisher={#AppPublisher}
-AppPublisherURL={#AppURL}
-AppSupportURL={#AppURL}
-AppUpdatesURL={#AppURL}
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 AllowNoIcons=yes
@@ -37,27 +33,31 @@ polish.OpenConfigFile=Otwórz plik konfiguracyjny (appsettings.json)
 english.OpenConfigFile=Open configuration file (appsettings.json)
 
 [Files]
-; Najpierw kopiujemy wszystko PRÓCZ pliku konfiguracyjnego
-Source: "..\publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "appsettings.json"
-; Plik konfiguracyjny kopiujemy osobno - nie nadpisujemy go przy aktualizacji (zachowujemy ustawienia użytkownika)
+; Exclude appsettings.Development.json and the main appsettings.json from the bulk copy
+Source: "..\publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "appsettings.json, appsettings.Development.json"
+; Handle appsettings.json separately to preserve user settings on update
 Source: "..\publish\appsettings.json"; DestDir: "{app}"; Flags: ignoreversion onlyifdoesntexist
+
+[Dirs]
+; Create logs directory and grant modify permissions to the service/users
+Name: "{app}\logs"; Permissions: users-modify
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"
 Name: "{group}\{cm:UninstallProgram,{#AppName}}"; Filename: "{uninstallexe}"
 
 [Run]
-; Instalacja serwisu
+; Install the service using sc.exe
 Filename: "{sys}\sc.exe"; Parameters: "create {#ServiceName} start= auto binPath= ""{app}\{#AppExeName}"" DisplayName= ""{#AppName}"""; Flags: runhidden
-; Opis serwisu
+; Set description
 Filename: "{sys}\sc.exe"; Parameters: "description {#ServiceName} ""Automated Remote Backup Service (FTP/HTTP)"""; Flags: runhidden
-; Uruchomienie serwisu
+; Start the service
 Filename: "{sys}\sc.exe"; Parameters: "start {#ServiceName}"; Flags: runhidden
-; OPCJA: Otwarcie pliku konfiguracyjnego na koniec instalacji
+; Option to open config file
 Filename: "{app}\appsettings.json"; Description: "{cm:OpenConfigFile}"; Flags: postinstall shellexec skipifsilent
 
 [UninstallRun]
-; Zatrzymanie i usunięcie serwisu przy deinstalacji
+; Stop and delete the service
 Filename: "{sys}\sc.exe"; Parameters: "stop {#ServiceName}"; Flags: runhidden
 Filename: "{sys}\sc.exe"; Parameters: "delete {#ServiceName}"; Flags: runhidden
 
@@ -67,7 +67,6 @@ var
   ResultCode: Integer;
 begin
   Result := True;
-  // Próba zatrzymania serwisu przed instalacją nowej wersji
   Exec('sc.exe', 'stop {#ServiceName}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
 
@@ -77,7 +76,6 @@ var
 begin
   if CurStep = ssInstall then
   begin
-    // Usuwamy stary serwis przed nową instalacją, aby upewnić się, że ścieżka i parametry są aktualne
     Exec('sc.exe', 'stop {#ServiceName}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     Exec('sc.exe', 'delete {#ServiceName}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     Sleep(1000);
