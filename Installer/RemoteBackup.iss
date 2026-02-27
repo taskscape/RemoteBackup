@@ -3,7 +3,6 @@
 #define AppExeName "BackupService.exe"
 #define ServiceName "BackupService"
 
-; Get version from command line or default to 1.0.0
 #ifndef AppVersion
   #define AppVersion "1.0.0"
 #endif
@@ -46,13 +45,10 @@ Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"
 Name: "{group}\{cm:UninstallProgram,{#AppName}}"; Filename: "{uninstallexe}"
 
 [Run]
-; Rejestracja usługi z poprawnym maskowaniem cudzysłowów dla Inno Setup
+; KLUCZOWE: sc.exe WYMAGA spacji po znaku '=' (np. binPath= "path")
 Filename: "{sys}\sc.exe"; Parameters: "create {#ServiceName} start= auto binPath= ""{app}\{#AppExeName}"" DisplayName= ""{#AppName}"""; Flags: runhidden waituntilterminated
-; Opis usługi
 Filename: "{sys}\sc.exe"; Parameters: "description {#ServiceName} ""Automated Remote Backup Service (FTP/HTTP)"""; Flags: runhidden waituntilterminated
-; Próba uruchomienia
 Filename: "{sys}\sc.exe"; Parameters: "start {#ServiceName}"; Flags: runhidden nowait
-; Opcja konfiguracji
 Filename: "{app}\appsettings.json"; Description: "{cm:OpenConfigFile}"; Flags: postinstall shellexec skipifsilent
 
 [UninstallRun]
@@ -69,16 +65,5 @@ begin
     Exec('sc.exe', 'stop {#ServiceName}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     Exec('sc.exe', 'delete {#ServiceName}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     Sleep(2000);
-  end;
-end;
-
-procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
-var
-  ResultCode: Integer;
-begin
-  if CurUninstallStep = usUninstall then
-  begin
-    Exec('sc.exe', 'stop {#ServiceName}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-    Exec('sc.exe', 'delete {#ServiceName}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   end;
 end;
