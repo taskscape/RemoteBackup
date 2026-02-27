@@ -46,9 +46,8 @@ Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"
 Name: "{group}\{cm:UninstallProgram,{#AppName}}"; Filename: "{uninstallexe}"
 
 [Run]
-; Rejestracja usługi z poprawnym maskowaniem cudzysłowów dla ścieżek ze spacjami
-; binPath= musi zawierać ścieżkę wewnątrz cudzysłowów, jeśli są w niej spacje
-Filename: "{sys}\sc.exe"; Parameters: "create {#ServiceName} start= auto binPath= \"\"\"{app}\{#AppExeName}\"\"\" DisplayName= \"{#AppName}\""; Flags: runhidden waituntilterminated
+; Rejestracja usługi z poprawnym maskowaniem cudzysłowów dla Inno Setup
+Filename: "{sys}\sc.exe"; Parameters: "create {#ServiceName} start= auto binPath= ""{app}\{#AppExeName}"" DisplayName= ""{#AppName}"""; Flags: runhidden waituntilterminated
 ; Opis usługi
 Filename: "{sys}\sc.exe"; Parameters: "description {#ServiceName} ""Automated Remote Backup Service (FTP/HTTP)"""; Flags: runhidden waituntilterminated
 ; Próba uruchomienia
@@ -67,10 +66,8 @@ var
 begin
   if CurStep = ssInstall then
   begin
-    // Brutalne zatrzymanie i usunięcie starej usługi przed kopiowaniem plików
     Exec('sc.exe', 'stop {#ServiceName}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     Exec('sc.exe', 'delete {#ServiceName}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-    // Czekamy chwilę, aż system Windows faktycznie usunie usługę z bazy
     Sleep(2000);
   end;
 end;
