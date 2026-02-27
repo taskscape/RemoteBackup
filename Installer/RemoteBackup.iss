@@ -13,7 +13,8 @@ AppId={{D0E7B26C-B234-4A82-841F-43C3A3311E6A}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppPublisher={#AppPublisher}
-DefaultDirName={autopf}\{#AppName}
+; Use 64-bit Program Files directory
+DefaultDirName={autopf64}\{#AppName}
 DefaultGroupName={#AppName}
 AllowNoIcons=yes
 OutputDir=Output
@@ -23,6 +24,9 @@ SolidCompression=yes
 WizardStyle=modern
 PrivilegesRequired=admin
 CloseApplications=yes
+; Required for 64-bit installation
+ArchitecturesAllowed=x64
+ArchitecturesInstallIn64BitMode=x64
 
 [Languages]
 Name: "polish"; MessagesFile: "compiler:Languages\Polish.isl"
@@ -39,7 +43,8 @@ Source: "..\publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs cr
 Source: "..\publish\appsettings.json"; DestDir: "{app}"; Flags: ignoreversion onlyifdoesntexist
 
 [Dirs]
-; Create logs directory and grant modify permissions to the service/users
+; Even in 64-bit Program Files, the folder is protected.
+; We MUST grant modify permissions to the logs directory so the service can write to it.
 Name: "{app}\logs"; Permissions: users-modify
 
 [Icons]
