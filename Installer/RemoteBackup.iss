@@ -45,13 +45,15 @@ Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"
 Name: "{group}\{cm:UninstallProgram,{#AppName}}"; Filename: "{uninstallexe}"
 
 [Run]
-; KLUCZOWE: sc.exe WYMAGA spacji po znaku '=' (np. binPath= "path")
+; sc.exe wymaga spacji po '='
 Filename: "{sys}\sc.exe"; Parameters: "create {#ServiceName} start= auto binPath= ""{app}\{#AppExeName}"" DisplayName= ""{#AppName}"""; Flags: runhidden waituntilterminated
 Filename: "{sys}\sc.exe"; Parameters: "description {#ServiceName} ""Automated Remote Backup Service (FTP/HTTP)"""; Flags: runhidden waituntilterminated
-Filename: "{sys}\sc.exe"; Parameters: "start {#ServiceName}"; Flags: runhidden nowait
+; Zmiana na waituntilterminated dla pewności startu
+Filename: "{sys}\sc.exe"; Parameters: "start {#ServiceName}"; Flags: runhidden waituntilterminated
 Filename: "{app}\appsettings.json"; Description: "{cm:OpenConfigFile}"; Flags: postinstall shellexec skipifsilent
 
 [UninstallRun]
+; Używamy pełnej ścieżki systemowej do sc.exe
 Filename: "{sys}\sc.exe"; Parameters: "stop {#ServiceName}"; Flags: runhidden
 Filename: "{sys}\sc.exe"; Parameters: "delete {#ServiceName}"; Flags: runhidden
 
@@ -59,11 +61,31 @@ Filename: "{sys}\sc.exe"; Parameters: "delete {#ServiceName}"; Flags: runhidden
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   ResultCode: Integer;
+  ScPath: string;
 begin
   if CurStep = ssInstall then
   begin
-    Exec('sc.exe', 'stop {#ServiceName}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-    Exec('sc.exe', 'delete {#ServiceName}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    // Pobieramy pełną ścieżkę do sc.exe
+    ScPath := ExpandConstant('{sys}\sc.exe');
+
+    // Wymuszamy zatrzymanie i usunięcie starej usługi przed kopiowaniem plików
+    Exec(ScPath, 'stop {#ServiceName}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Exec(ScPath, 'delete {#ServiceName}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    
+    // Czekamy na zwolnienie blokad plików
     Sleep(2000);
+  end;
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  ResultCode: Integer;
+  ScPath: string;
+begin
+  if CurUninstallStep = usUninstall then
+  begin
+    ScPath := ExpandConstant('{sys}\sc.exe');
+    Exec(ScPath, 'stop {#ServiceName}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Exec(ScPath, 'delete {#ServiceName}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   end;
 end;
