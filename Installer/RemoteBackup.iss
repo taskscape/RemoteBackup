@@ -39,12 +39,13 @@ english.OpenConfigFile=Open configuration file (appsettings.json)
 [Files]
 ; Exclude appsettings.Development.json and the main appsettings.json from the bulk copy
 Source: "..\publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "appsettings.json, appsettings.Development.json"
-; Handle appsettings.json separately to preserve user settings on update
-Source: "..\publish\appsettings.json"; DestDir: "{app}"; Flags: ignoreversion onlyifdoesntexist
+; Handle appsettings.json separately:
+; 1. onlyifdoesntexist: to keep your settings during updates
+; 2. Permissions: users-modify: allows you to save changes right after install without running as admin
+Source: "..\publish\appsettings.json"; DestDir: "{app}"; Flags: ignoreversion onlyifdoesntexist; Permissions: users-modify
 
 [Dirs]
-; Even in 64-bit Program Files, the folder is protected.
-; We MUST grant modify permissions to the logs directory so the service can write to it.
+; Create logs directory and grant modify permissions
 Name: "{app}\logs"; Permissions: users-modify
 
 [Icons]
