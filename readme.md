@@ -1,8 +1,8 @@
 # BackupService
 
-Windows service for scheduled FTP/FTPS backups. It mirrors a remote FTP
-folder to a local drive path on a daily schedule, keeps timestamped
-snapshots, and produces daily zip archives.
+Windows service for scheduled FTP/FTPS backups. It supports two main FTP modes:
+1. **Mirror Remote to Local (Default/FTP):** Mirrors a remote FTP folder to a local drive path, keeps snapshots, and produces daily zip archives.
+2. **Local to Remote (FTP_UPLOAD):** Zips a local folder and uploads the archive to a remote FTP server.
 
 ## Requirements
 
@@ -48,64 +48,56 @@ Key settings:
 - `BackupOptions:DefaultTimeoutMinutes`: per-job timeout (default `60`).
 - `BackupOptions:HistoryCopies`: number of snapshots kept (default `5`).
 - `BackupOptions:Backups`: list of backup jobs.
-- `ServiceSettings:StartHour` / `ServiceSettings:StartMinute`: currently
-  used by a startup timer that logs when the service would start; actual
-  scheduling uses `BackupOptions:RunAt`.
+
+### Backup Types
+
+- `FTP` (Default): Mirrors remote files to local storage.
+- `FTP_UPLOAD`: Zips a local folder and uploads it to the FTP server.
+- `HTTP`: Triggers a backup via an HTTP endpoint and downloads the result.
+
+### Job Settings
 
 Each backup job supports:
 
 - `Name`: friendly name for logs.
+- `BackupType`: `FTP`, `FTP_UPLOAD`, or `HTTP`.
 - `Host`, `Port`, `Username`, `Password`: FTP server credentials.
-- `RemotePath`: remote folder to mirror.
-- `LocalPath`: local drive folder to store the mirror, snapshots, and archives.
+- `RemotePath`: 
+    - For `FTP`: remote folder to mirror.
+    - For `FTP_UPLOAD`: remote directory where the zip will be uploaded.
+- `LocalPath`: 
+    - For `FTP`: local folder to store the mirror, snapshots, and archives.
+    - For `FTP_UPLOAD`: local folder to be zipped and uploaded.
 - `Encryption`: `Explicit` or `Implicit` (default `Explicit`).
 - `Passive`: `true` for passive mode (default `true`).
 - `AllowInvalidCertificate`: set `true` to skip TLS validation.
 - `TimeoutMinutes`: overrides the default timeout.
-- `HistoryCopies`: overrides the default retention count.
-- `RetentionDays`: days to keep zip archives (default `7`).
-- `OperationTimeoutMinutes`: timeout for the final post-archive FTP
-  download (default `10`).
-- `CompletionTimeoutMinutes`: overall per-job timeout for copy/archive
-  work (default `180`).
+- `RetentionDays`: days to keep local zip archives (for `FTP` mode, default `7`).
 
-Example:
+Example Configuration:
 
 ```json
 {
-  "FileLogging": {
-    "Path": "logs\\backup.log",
-    "MinimumLevel": "Information"
-  },
   "BackupOptions": {
     "RunAt": "02:00",
-    "HistoryCopies": 5,
-    "DefaultTimeoutMinutes": 60,
-    "CurrentSubdirectoryName": "current",
-    "HistorySubdirectoryName": "_history",
     "Backups": [
       {
-        "Name": "SiteA",
+        "Name": "MirrorRemoteSite",
+        "BackupType": "FTP",
         "Host": "ftp.example.com",
-        "Port": 21,
-        "Username": "user",
-        "Password": "password",
-        "RemotePath": "/",
         "LocalPath": "D:\\Backups\\SiteA",
-        "Encryption": "Explicit",
-        "Passive": true,
-        "AllowInvalidCertificate": false,
-        "TimeoutMinutes": 60,
-        "HistoryCopies": 5,
-        "RetentionDays": 7,
-        "OperationTimeoutMinutes": 10,
-        "CompletionTimeoutMinutes": 180
+        "RemotePath": "/www"
+      },
+      {
+        "Name": "UploadLocalData",
+        "BackupType": "FTP_UPLOAD",
+        "Host": "backup.storage.com",
+        "LocalPath": "C:\\ImportantData",
+        "RemotePath": "/backups/server1",
+        "Username": "backup_user",
+        "Password": "secure_password"
       }
     ]
-  },
-  "ServiceSettings": {
-    "StartHour": 2,
-    "StartMinute": 0
   }
 }
 ```
