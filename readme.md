@@ -1,166 +1,126 @@
-# BackupService
+# RemoteBackup Service
 
-Windows service for scheduled FTP/FTPS backups. It mirrors a remote FTP
-folder to a local drive path on a daily schedule, keeps timestamped
-snapshots, and produces daily zip archives.
+Advanced Windows service for automated scheduled backups. The system supports three primary modes of operation:
+1. FTP Mirror (Remote to Local): Synchronizes a remote FTP folder to a local disk, maintains history snapshots, and compresses them into ZIP archives.
+2. FTP Upload (Local to Remote): Compresses a local folder into a ZIP archive and uploads it to a remote FTP server.
+3. HTTP Trigger (Trigger and Download): Calls a specific URL that generates a backup on the server, then downloads the resulting file locally.
 
-## Requirements
+---
 
-- .NET SDK 10.0+
-- Windows machine with access to the remote FTP server
-- Local destination on a drive letter path (for example: `D:\Backups\SiteA`)
+## Configuration (appsettings.json)
 
-## Installation
+The configuration is located within the "BackupOptions" section. You can define multiple independent backup tasks in the "Backups" array.
 
-1. Build and publish the service:
+### Global Settings
+| Field | Description | Example |
+| :--- | :--- | :--- |
+| RunAt | Time of day to start the backup (24h format). | "02:30" |
+| HistoryCopies | Default number of historical archives to keep. | 5 |
+| DefaultTimeoutMinutes | Default timeout for a single backup task. | 60 |
+| Backups | List (array) of objects defining individual tasks. | [...] |
 
-```powershell
-dotnet publish .\BackupService.csproj -c Release -o C:\Services\BackupService
-```
+---
 
-2. Create the Windows service:
+### Detailed Task Fields (Backups)
 
-```powershell
-sc.exe create BackupService binPath= "C:\Services\BackupService\BackupService.exe"
-```
+Each task in the "Backups" array can contain the following fields:
 
-3. (Optional) Set the service account if needed:
+#### General Settings
+- Name (Required): Unique name for the task (used in logs and filenames).
+- BackupType: Type of backup: "FTP" (default), "FTP_UPLOAD", or "HTTP".
+- LocalPath (Required): Local path on the disk (destination for downloads or source for uploads).
+- HistoryCopies: Overrides the global number of kept copies for this specific task.
+- RetentionDays: Number of days to keep old ZIP archives (default: 7).
 
-```powershell
-sc.exe config BackupService obj= ".\ServiceUser" password= "YourPassword"
-```
+#### FTP Configuration (for "FTP" and "FTP_UPLOAD" types)
+- Host: FTP server address (e.g., ftp.yourdomain.com).
+- Port: Server port (default: 21).
+- Username: FTP username.
+- Password: FTP password.
+- RemotePath: Path on the FTP server (source for "FTP", destination for "FTP_UPLOAD").
+- Encryption: Encryption type: "None", "Explicit" (default), or "Implicit".
+- Passive: Use passive mode (default: true).
+- AllowInvalidCertificate: Ignore SSL certificate errors (true/false).
 
-4. Start the service:
+#### HTTP Configuration (for "HTTP" type)
+- EndpointUrl: Full URL to trigger the backup (e.g., https://api.site.com/backup.php).
+- ApiToken: A separate field for the authorization token or secret key.
 
-```powershell
-sc.exe start BackupService
-```
+---
 
-## Configuration
+## Server-Side Setup (PHP)
 
-Edit `appsettings.json` (development) or provide a matching
-`appsettings.json` alongside the published executable. The important
-sections are `BackupOptions`, `FileLogging`, and `ServiceSettings`.
+The `php-server` folder contains a ready-to-use script for the HTTP backup mode. This is useful if you want to trigger a backup of a web server from the Windows service.
 
-Key settings:
+### Files in php-server:
+1. **backup.php**: The main execution script. When called with a valid token, it zips the configured source directory and streams it to the client.
+2. **config.php**: Security and path configuration.
 
-- `BackupOptions:RunAt`: local time for daily run (default `02:00`).
-- `BackupOptions:DefaultTimeoutMinutes`: per-job timeout (default `60`).
-- `BackupOptions:HistoryCopies`: number of snapshots kept (default `5`).
-- `BackupOptions:Backups`: list of backup jobs.
-- `ServiceSettings:StartHour` / `ServiceSettings:StartMinute`: currently
-  used by a startup timer that logs when the service would start; actual
-  scheduling uses `BackupOptions:RunAt`.
+### config.php Breakdown:
+Modify these values to secure your endpoint:
+- **API_TOKEN**: A secret string that must match the `ApiToken` in your `appsettings.json`. If they don't match, the request is rejected.
+- **ALLOWED_IPS**: An array of IP addresses allowed to trigger the backup. Use `['*']` to allow any IP (not recommended) or specify your backup server's IP.
+- **BACKUP_SOURCE_DIR**: The absolute path to the folder on the web server that you want to back up (e.g., `/var/www/html`).
+- **TEMP_DIR**: Where the temporary ZIP file is created before downloading.
 
-Each backup job supports:
+---
 
-- `Name`: friendly name for logs.
-- `Host`, `Port`, `Username`, `Password`: FTP server credentials.
-- `RemotePath`: remote folder to mirror.
-- `LocalPath`: local drive folder to store the mirror, snapshots, and archives.
-- `Encryption`: `Explicit` or `Implicit` (default `Explicit`).
-- `Passive`: `true` for passive mode (default `true`).
-- `AllowInvalidCertificate`: set `true` to skip TLS validation.
-- `TimeoutMinutes`: overrides the default timeout.
-- `HistoryCopies`: overrides the default retention count.
-- `RetentionDays`: days to keep zip archives (default `7`).
-- `OperationTimeoutMinutes`: timeout for the final post-archive FTP
-  download (default `10`).
-- `CompletionTimeoutMinutes`: overall per-job timeout for copy/archive
-  work (default `180`).
+## Configuration Examples
 
-Example:
+Copy and paste the following into your appsettings.json and adjust the values:
 
 ```json
 {
-  "FileLogging": {
-    "Path": "logs\\backup.log",
-    "MinimumLevel": "Information"
-  },
   "BackupOptions": {
-    "RunAt": "02:00",
+    "RunAt": "01:00",
     "HistoryCopies": 5,
-    "DefaultTimeoutMinutes": 60,
-    "CurrentSubdirectoryName": "current",
-    "HistorySubdirectoryName": "_history",
     "Backups": [
       {
-        "Name": "SiteA",
+        "Name": "Website_Files",
+        "BackupType": "FTP",
         "Host": "ftp.example.com",
-        "Port": 21,
-        "Username": "user",
-        "Password": "password",
-        "RemotePath": "/",
-        "LocalPath": "D:\\Backups\\SiteA",
-        "Encryption": "Explicit",
-        "Passive": true,
-        "AllowInvalidCertificate": false,
-        "TimeoutMinutes": 60,
-        "HistoryCopies": 5,
-        "RetentionDays": 7,
-        "OperationTimeoutMinutes": 10,
-        "CompletionTimeoutMinutes": 180
+        "Username": "admin_www",
+        "Password": "secure-password-123",
+        "RemotePath": "/public_html",
+        "LocalPath": "D:\\Backups\\Website",
+        "RetentionDays": 14
+      },
+      {
+        "Name": "Database_Export",
+        "BackupType": "FTP_UPLOAD",
+        "Host": "storage-server.com",
+        "Username": "backup_user",
+        "Password": "storage-password",
+        "LocalPath": "C:\\SQLBackups",
+        "RemotePath": "/remote-storage/sql",
+        "Encryption": "Explicit"
+      },
+      {
+        "Name": "External_API_System",
+        "BackupType": "HTTP",
+        "EndpointUrl": "https://mysystem.com/api/backup.php",
+        "ApiToken": "YOUR_SECRET_TOKEN_HERE",
+        "LocalPath": "D:\\Backups\\SystemAPI",
+        "HistoryCopies": 3
       }
     ]
-  },
-  "ServiceSettings": {
-    "StartHour": 2,
-    "StartMinute": 0
   }
 }
 ```
 
-### Sensitive values
+---
 
-Passwords are stored in clear text in `appsettings.json`. For production
-use, consider setting credentials in environment variables and leaving
-the file values blank:
+## Installation and Logging
 
-```powershell
-$env:BackupOptions__Backups__0__Username = "user"
-$env:BackupOptions__Backups__0__Password = "password"
-```
+### How to Install
+1. Run RemoteBackupSetup.exe as administrator.
+2. The service will be automatically registered and started as "RemoteBackup Service".
+3. After installation, appsettings.json will open – configure your credentials there.
 
-## Running behavior
+### Where to Find Logs
+If a backup fails, check the following:
+1. Installation Folder: logs/backup.log file.
+2. Windows Event Viewer: "Application" section, source "BackupService".
 
-- On startup, the service performs a one-off FTP test run using the first
-  configured backup job and writes progress to the console.
-- The service runs once per day at the configured time.
-- Backups execute sequentially; a failure does not block the next job.
-- Each job is cancelled if it exceeds its timeout.
-- The remote path is mirrored into `LocalPath\current`.
-- Snapshot copies are stored in `LocalPath\_history\yyyyMMdd_HHmmss`.
-- A daily zip archive is created at
-  `LocalPath\archives\<JobName>\yyyy-MM-dd.zip`, and archives older than
-  `RetentionDays` are deleted.
-- Logs are written to the Windows Event Log and to the file path in
-  `FileLogging:Path`.
-  
-Note: `LocalPath` must be a local drive path (for example `D:\Backups\SiteA`);
-UNC paths are rejected by the runner.
-
-## Running locally (console mode)
-
-You can run the worker as a console app for quick testing:
-
-```powershell
-dotnet run --project .\BackupService.csproj
-```
-
-Press Ctrl+C to stop it.
-
-## Uninstall
-
-```powershell
-sc.exe stop BackupService
-sc.exe delete BackupService
-```
-
-## Troubleshooting
-
-- If the service cannot write logs, ensure the service account has write
-  access to the log directory and backup destination.
-- If TLS validation fails, set `AllowInvalidCertificate` to `true` for
-  the specific backup or install a trusted certificate on the machine.
-- If Event Log entries do not appear, run the service once with elevated
-  permissions or pre-create the event source.
+---
+Documentation created for RemoteBackup Service v1.0.0
