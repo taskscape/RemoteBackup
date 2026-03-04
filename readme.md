@@ -96,8 +96,68 @@ $env:BackupOptions__Backups__0__Password = "password"
 
 ## Configuration Examples
 
-Copy and paste the following into your appsettings.json and adjust the values:
+### 1. FTP Mirror (Remote to Local)
+```json
+{
+  "BackupOptions": {
+    "RunAt": "02:00",
+    "Backups": [
+      {
+        "Name": "MirrorWebsite",
+        "BackupType": "FTP",
+        "Host": "ftp.example.com",
+        "Username": "user",
+        "Password": "password",
+        "RemotePath": "/public_html",
+        "LocalPath": "D:\\Backups\\SiteMirror",
+        "RetentionDays": 7
+      }
+    ]
+  }
+}
+```
 
+### 2. FTP Upload (Local to Remote)
+```json
+{
+  "BackupOptions": {
+    "RunAt": "03:00",
+    "Backups": [
+      {
+        "Name": "UploadLocalData",
+        "BackupType": "FTP_UPLOAD",
+        "Host": "backup.storage.com",
+        "Username": "backup_user",
+        "Password": "secure_password",
+        "LocalPath": "C:\\ImportantData",
+        "RemotePath": "/server1/uploads",
+        "Encryption": "Explicit",
+        "Passive": true
+      }
+    ]
+  }
+}
+```
+
+### 3. HTTP Trigger and Download
+```json
+{
+  "BackupOptions": {
+    "RunAt": "04:00",
+    "Backups": [
+      {
+        "Name": "TriggerDBBackup",
+        "BackupType": "HTTP",
+        "EndpointUrl": "https://mysite.com/backup.php",
+        "ApiToken": "SECRET_TOKEN_HERE",
+        "LocalPath": "D:\\Backups\\Database"
+      }
+    ]
+  }
+}
+```
+
+### 4. Multiple Services (Combined Example)
 ```json
 {
   "BackupOptions": {
@@ -105,32 +165,29 @@ Copy and paste the following into your appsettings.json and adjust the values:
     "HistoryCopies": 5,
     "Backups": [
       {
-        "Name": "Website_Files",
+        "Name": "MainWebsiteFiles",
         "BackupType": "FTP",
-        "Host": "ftp.example.com",
-        "Username": "admin_www",
-        "Password": "secure-password-123",
+        "Host": "ftp.site1.com",
+        "Username": "user1",
+        "Password": "pass1",
+        "RemotePath": "/www",
+        "LocalPath": "D:\\Backups\\Site1"
+      },
+      {
+        "Name": "SecondWebsiteFiles",
+        "BackupType": "FTP",
+        "Host": "ftp.site2.com",
+        "Username": "user2",
+        "Password": "pass2",
         "RemotePath": "/public_html",
-        "LocalPath": "D:\\Backups\\Website",
-        "RetentionDays": 14
+        "LocalPath": "D:\\Backups\\Site2"
       },
       {
-        "Name": "Database_Export",
-        "BackupType": "FTP_UPLOAD",
-        "Host": "storage-server.com",
-        "Username": "backup_user",
-        "Password": "storage-password",
-        "LocalPath": "C:\\SQLBackups",
-        "RemotePath": "/remote-storage/sql",
-        "Encryption": "Explicit"
-      },
-      {
-        "Name": "External_API_System",
+        "Name": "RemoteDatabase",
         "BackupType": "HTTP",
-        "EndpointUrl": "https://mysystem.com/api/backup.php",
-        "ApiToken": "YOUR_SECRET_TOKEN_HERE",
-        "LocalPath": "D:\\Backups\\SystemAPI",
-        "HistoryCopies": 3
+        "EndpointUrl": "https://api.site3.com/backup.php",
+        "ApiToken": "TOKEN_ABC",
+        "LocalPath": "D:\\Backups\\Database"
       }
     ]
   }
