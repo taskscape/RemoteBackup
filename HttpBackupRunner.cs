@@ -70,7 +70,12 @@ public class HttpBackupRunner(ILogger<HttpBackupRunner> logger)
 
         if (result?.Status == "success" && !string.IsNullOrEmpty(result.DownloadUrl))
         {
-            logger.LogInformation("Backup {action} generated: {file} ({size} bytes). Downloading...", action, result.File, result.Size);
+            logger.LogInformation(
+                "Backup {action} generated: {file} ({size} bytes). Downloading from: {url}", 
+                action, 
+                result.File, 
+                result.Size,
+                result.DownloadUrl);
             await DownloadFileAsync(result.DownloadUrl, Path.Combine(archiveDir, result.File), ct);
             logger.LogInformation("Downloaded {file} successfully.", result.File);
         }

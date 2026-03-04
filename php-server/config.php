@@ -7,8 +7,8 @@ return [
     // Security token that must be sent in the X-Backup-Token header
     'auth_token' => 'CHANGE_ME_TO_A_SECURE_RANDOM_STRING',
 
-    // Directory where backup files will be stored (relative to this script or absolute)
-    'backup_dir' => __DIR__ . '/archives',
+    // Directory where backup files will be stored (same folder as script)
+    'backup_dir' => __DIR__,
 
     // How many days to keep old backup files
     'retention_days' => 7,
@@ -26,7 +26,7 @@ return [
     'fs' => [
         'source_dir' => realpath(__DIR__ . '/../'), // Directory to backup (default is one level up)
         'exclude_dirs' => [
-            'archives', // Exclude the backup storage directory
+            'backup'
             '.git',
             'node_modules',
             'vendor'
