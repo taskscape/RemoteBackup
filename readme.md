@@ -96,7 +96,7 @@ $env:BackupOptions__Backups__0__Password = "password"
 
 ## Configuration Examples
 
-### 1. FTP Mirror (Remote to Local)
+### 1. FTP (Remote to Local)
 ```json
 {
   "BackupOptions": {
