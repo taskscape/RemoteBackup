@@ -18,6 +18,7 @@ builder.Services.Configure<FileLoggerOptions>(
     builder.Configuration.GetSection(FileLoggerOptions.SectionName));
 
 builder.Services.AddSingleton<FtpBackupRunner>();
+builder.Services.AddSingleton<FtpUploadRunner>();
 builder.Services.AddSingleton<HttpBackupRunner>();
 builder.Services.AddSingleton<BackupCoordinator>();
 builder.Services.AddHostedService<Worker>();
@@ -47,14 +48,21 @@ ServiceScheduler.StartServiceAtConfiguredTime(starHour, startMinute, () =>
 var host = builder.Build();
 
 var ftpRunner = host.Services.GetRequiredService<FtpBackupRunner>();
+var ftpUploadRunner = host.Services.GetRequiredService<FtpUploadRunner>();
 var httpRunner = host.Services.GetRequiredService<HttpBackupRunner>();
 
 try
 {
-    if (backupJob.BackupType?.ToUpper() == "HTTP")
+    var backupType = backupJob.BackupType?.ToUpper() ?? "FTP";
+    if (backupType == "HTTP")
     {
         Console.WriteLine($"Starting HTTP backup test for '{backupJob.Name}'...");
         await httpRunner.RunJobAsync(backupJob, backupOptions, CancellationToken.None);
+    }
+    else if (backupType == "FTP_UPLOAD")
+    {
+        Console.WriteLine($"Starting FTP Upload backup test for '{backupJob.Name}'...");
+        await ftpUploadRunner.RunJobAsync(backupJob, backupOptions, CancellationToken.None);
     }
     else
     {
