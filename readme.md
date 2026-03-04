@@ -12,6 +12,18 @@ Windows service for scheduled FTP/FTPS backups. It supports two main FTP modes:
 
 ## Installation
 
+### Professional Installer (Recommended)
+
+The easiest way to install the service is using the provided Inno Setup installer:
+
+1. Run the `RemoteBackupSetup.exe` installer as Administrator.
+2. Follow the wizard steps.
+3. At the end of the installation, you can opt to open `appsettings.json` to configure your connections.
+
+The installer handles service registration, starting the service, and ensures your configuration is not overwritten during updates.
+
+### Manual Installation
+
 1. Build and publish the service:
 
 ```powershell
@@ -37,6 +49,59 @@ sc.exe start BackupService
 ```
 
 ## Configuration
+
+### 1. HTTP/PHP Mode (Recommended for Web Services)
+
+This mode uses a PHP script on your server to bundle files and database into archives for the C# service to download.
+
+#### Server Setup:
+1. Copy the contents of the `php-server/` folder to your website (e.g., to `/backup/`).
+2. Edit `php-server/config.php`:
+   - Set `auth_token` to a secure random string.
+   - Configure `db` section with your MySQL credentials.
+   - Adjust `fs -> source_dir` to point to your website root.
+
+#### Client Setup (`appsettings.json`):
+```json
+{
+  "BackupOptions": {
+    "Backups": [
+      {
+        "Name": "MyWebsite",
+        "BackupType": "HTTP",
+        "EndpointUrl": "https://yourdomain.com/backup/backup.php",
+        "ApiToken": "your_secure_token",
+        "LocalPath": "C:\\Backups\\MyWebsite",
+        "RetentionDays": 7
+      }
+    ]
+  }
+}
+```
+
+### 2. FTP/FTPS Mode
+
+Classic mode for servers without PHP support.
+
+```json
+{
+  "BackupOptions": {
+    "Backups": [
+      {
+        "Name": "LegacyFTPSite",
+        "BackupType": "FTP",
+        "Host": "ftp.example.com",
+        "Username": "user",
+        "Password": "password",
+        "RemotePath": "/",
+        "LocalPath": "C:\\Backups\\LegacySite",
+        "Encryption": "Explicit",
+        "Passive": true
+      }
+    ]
+  }
+}
+```
 
 Edit `appsettings.json` (development) or provide a matching
 `appsettings.json` alongside the published executable. The important
@@ -130,6 +195,21 @@ $env:BackupOptions__Backups__0__Password = "password"
   
 Note: `LocalPath` must be a local drive path (for example `D:\Backups\SiteA`);
 UNC paths are rejected by the runner.
+
+## Development and Building
+
+### Building the Installer
+
+To generate the Inno Setup installer:
+
+1. Ensure **Inno Setup 6** is installed on your machine.
+2. Run the automated build script:
+
+```powershell
+.\BuildInstaller.ps1
+```
+
+This script will publish the project in self-contained mode and compile the `RemoteBackupSetup.exe`.
 
 ## Running locally (console mode)
 
