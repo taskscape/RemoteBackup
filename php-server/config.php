@@ -14,19 +14,19 @@ return [
     'retention_days' => 7,
 
     // Database configuration
-    'db' => [
+     'db' => [
         'host' => 'localhost',
-        'user' => 'root',
+        'user' => '',
         'pass' => '',
-        'name' => 'database_name',
-        'table_prefix' => '*', // Use '*' for all tables, or 'wp_' for specific prefix
+        'name' => '',
+        'table_prefix' => '', // Use '*' for all tables, or 'wp_' for specific prefix
     ],
 
     // Filesystem configuration
     'fs' => [
         'source_dir' => realpath(__DIR__ . '/../'), // Directory to backup (default is one level up)
         'exclude_dirs' => [
-            'backup'
+            'backup',
             '.git',
             'node_modules',
             'vendor'
