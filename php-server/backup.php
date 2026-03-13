@@ -4,7 +4,7 @@
  * Handles both Filesystem and Database backups.
  */
 
-// --- DEBUG MODE (Keep it for a moment) ---
+// --- DEBUG MODE ---
 ini_set('display_errors', 1);
 ini_set('display_startup_errors', 1);
 error_reporting(E_ALL);
@@ -16,10 +16,9 @@ ini_set('memory_limit', '512M');
 
 $config = require 'config.php';
 
-// 1. Authentication (Safe way to get token)
+// 1. Authentication
 $providedToken = $_GET['token'] ?? null;
 
-// Fallback to headers if not in URL
 if (!$providedToken) {
     $headers = [];
     foreach ($_SERVER as $name => $value) {
@@ -62,13 +61,11 @@ switch ($action) {
         break;
 }
 
-// --- Functions ---
-
 function cleanupOldBackups($dir, $days) {
     $files = glob($dir . '/*');
     $now = time();
     foreach ($files as $file) {
-        if (is_file($file)) {
+        if (is_file($file) && (basename($file) !== 'backup.php' && basename($file) !== 'config.php')) {
             if ($now - filemtime($file) >= $days * 24 * 60 * 60) {
                 unlink($file);
             }
@@ -82,7 +79,7 @@ function handleFilesBackup($config) {
     $outputPath = $config['backup_dir'] . '/' . $filename;
 
     if (!class_exists('ZipArchive')) {
-        echo json_encode(['status' => 'error', 'message' => 'ZipArchive class not found. Enable ZIP extension in PHP.']);
+        echo json_encode(['status' => 'error', 'message' => 'ZipArchive class not found.']);
         return;
     }
 
@@ -117,13 +114,13 @@ function handleFilesBackup($config) {
         }
 
         if ($shouldExclude) continue;
+        if (basename($filePath) === 'backup.php' || basename($filePath) === 'config.php') continue;
 
         if ($file->isDir()) {
             $zip->addEmptyDir($relativePath);
         } else {
             $ext = pathinfo($filePath, PATHINFO_EXTENSION);
             if (in_array(strtolower($ext), $config['fs']['exclude_extensions'])) continue;
-            
             $zip->addFile($filePath, $relativePath);
         }
     }
@@ -151,7 +148,7 @@ function handleDatabaseBackup($config) {
 
     try {
         if (!function_exists('mysqli_connect')) {
-            throw new Exception('mysqli extension not found. Enable mysqli in PHP.');
+            throw new Exception('mysqli extension not found.');
         }
 
         mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
@@ -204,6 +201,18 @@ function handleDatabaseBackup($config) {
 function getDownloadUrl($filename) {
     $protocol = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 'https' : 'http';
     $host = $_SERVER['HTTP_HOST'];
-    $uri = dirname($_SERVER['REQUEST_URI']);
-    return "$protocol://$host$uri/archives/$filename";
+    
+    // Używamy SCRIPT_NAME zamiast REQUEST_URI dla większej niezawodności
+    $scriptPath = $_SERVER['SCRIPT_NAME']; 
+    $dirPath = dirname($scriptPath);
+    
+    // Normalizacja ukośników
+    $dirPath = rtrim($dirPath, '/\\');
+    
+    // Jeśli dirPath to głowny katalog, dirname zwróci pusty string lub \ lub /
+    if ($dirPath === DIRECTORY_SEPARATOR || $dirPath === '.') {
+        $dirPath = '';
+    }
+
+    return "$protocol://$host$dirPath/$filename";
 }
