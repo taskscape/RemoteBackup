@@ -36,6 +36,8 @@ english.OpenConfigFile=Open configuration file (appsettings.json)
 [Files]
 Source: "..\publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "appsettings.json, appsettings.Development.json"
 Source: "..\publish\appsettings.json"; DestDir: "{app}"; Flags: ignoreversion onlyifdoesntexist; Permissions: users-modify
+Source: "..\php-server\*"; DestDir: "{app}\php-server"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\readme.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Dirs]
 Name: "{app}\logs"; Permissions: users-modify
@@ -51,6 +53,7 @@ Filename: "{sys}\sc.exe"; Parameters: "description {#ServiceName} ""Automated Re
 ; Zmiana na waituntilterminated dla pewności startu
 Filename: "{sys}\sc.exe"; Parameters: "start {#ServiceName}"; Flags: runhidden waituntilterminated
 Filename: "{app}\appsettings.json"; Description: "{cm:OpenConfigFile}"; Flags: postinstall shellexec skipifsilent
+Filename: "{app}\readme.md"; Description: "View Readme file"; Flags: postinstall shellexec skipifsilent
 
 [UninstallRun]
 ; Używamy pełnej ścieżki systemowej do sc.exe
