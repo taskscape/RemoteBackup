@@ -7,20 +7,23 @@ public class BackupCoordinator(
     IOptions<BackupOptions> options,
     FtpBackupRunner ftpRunner,
     FtpUploadRunner ftpUploadRunner,
-    HttpBackupRunner httpRunner)
+    HttpBackupRunner httpRunner,
+    EmailNotificationService emailService)
 {
     private readonly BackupOptions _options = options.Value;
 
-    public async Task RunBackupsAsync(CancellationToken stoppingToken)
+    public async Task<bool> RunBackupsAsync(CancellationToken stoppingToken)
     {
         if (_options.Backups.Count == 0)
         {
             logger.LogWarning("No backups configured. Skipping run.");
-            return;
+            return true;
         }
 
+        bool allSuccessful = true;
         foreach (var job in _options.Backups)
         {
+            // ... (rest of the setup logic remains same)
             var timeoutMinutes = job.TimeoutMinutes ?? _options.DefaultTimeoutMinutes;
             using var timeoutCts = new CancellationTokenSource(
                 TimeSpan.FromMinutes(timeoutMinutes));
@@ -39,37 +42,58 @@ public class BackupCoordinator(
 
             try
             {
+                bool success;
                 if (backupType == "HTTP")
                 {
-                    await httpRunner.RunJobAsync(job, _options, linkedCts.Token);
+                    success = await httpRunner.RunJobAsync(job, _options, linkedCts.Token);
                 }
                 else if (backupType == "FTP_UPLOAD")
                 {
-                    await ftpUploadRunner.RunJobAsync(job, _options, linkedCts.Token);
+                    success = await ftpUploadRunner.RunJobAsync(job, _options, linkedCts.Token);
                 }
                 else
                 {
-                    await ftpRunner.RunJobAsync(job, _options, linkedCts.Token);
+                    success = await ftpRunner.RunJobAsync(job, _options, linkedCts.Token);
                 }
 
                 var duration = DateTimeOffset.Now - started;
-                logger.LogInformation(
-                    "Backup '{name}' completed in {duration}.",
-                    job.Name,
-                    duration);
+                if (success)
+                {
+                    logger.LogInformation(
+                        "Backup '{name}' completed successfully in {duration}.",
+                        job.Name,
+                        duration);
+                }
+                else
+                {
+                    allSuccessful = false;
+                    var reason = "Check individual step logs for details.";
+                    logger.LogError(
+                        "Backup '{name}' failed ({reason}) after {duration}.",
+                        job.Name,
+                        reason,
+                        duration);
+                    await emailService.SendFailureNotificationAsync(job, reason);
+                }
             }
             catch (OperationCanceledException) when (
                 timeoutCts.IsCancellationRequested && !stoppingToken.IsCancellationRequested)
             {
+                allSuccessful = false;
+                var reason = $"Timed out after {timeoutMinutes} minutes.";
                 logger.LogError(
-                    "Backup '{name}' timed out after {timeoutMinutes} minutes.",
+                    "Backup '{name}' failed! Reason: {reason}",
                     job.Name,
-                    timeoutMinutes);
+                    reason);
+                await emailService.SendFailureNotificationAsync(job, reason);
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Backup '{name}' failed.", job.Name);
+                allSuccessful = false;
+                logger.LogError(ex, "Backup '{name}' failed! Reason: {message}", job.Name, ex.Message);
+                await emailService.SendFailureNotificationAsync(job, ex.Message, ex);
             }
         }
+        return allSuccessful;
     }
 }

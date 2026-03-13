@@ -20,6 +20,7 @@ builder.Services.Configure<FileLoggerOptions>(
 builder.Services.AddSingleton<FtpBackupRunner>();
 builder.Services.AddSingleton<FtpUploadRunner>();
 builder.Services.AddSingleton<HttpBackupRunner>();
+builder.Services.AddSingleton<EmailNotificationService>();
 builder.Services.AddSingleton<BackupCoordinator>();
 builder.Services.AddHostedService<Worker>();
 
@@ -47,33 +48,25 @@ ServiceScheduler.StartServiceAtConfiguredTime(starHour, startMinute, () =>
 
 var host = builder.Build();
 
-var ftpRunner = host.Services.GetRequiredService<FtpBackupRunner>();
-var ftpUploadRunner = host.Services.GetRequiredService<FtpUploadRunner>();
-var httpRunner = host.Services.GetRequiredService<HttpBackupRunner>();
+var coordinator = host.Services.GetRequiredService<BackupCoordinator>();
 
 try
 {
-    var backupType = backupJob.BackupType?.ToUpper() ?? "FTP";
-    if (backupType == "HTTP")
+    Console.WriteLine("Starting initial backup test for all configured jobs...");
+    bool allSuccessful = await coordinator.RunBackupsAsync(CancellationToken.None);
+    
+    if (allSuccessful)
     {
-        Console.WriteLine($"Starting HTTP backup test for '{backupJob.Name}'...");
-        await httpRunner.RunJobAsync(backupJob, backupOptions, CancellationToken.None);
-    }
-    else if (backupType == "FTP_UPLOAD")
-    {
-        Console.WriteLine($"Starting FTP Upload backup test for '{backupJob.Name}'...");
-        await ftpUploadRunner.RunJobAsync(backupJob, backupOptions, CancellationToken.None);
+        Console.WriteLine("Initial backup test sequence completed successfully!");
     }
     else
     {
-        Console.WriteLine($"Starting FTP backup test for '{backupJob.Name}'...");
-        await ftpRunner.RunJobAsync(backupJob, backupOptions, CancellationToken.None);
+        Console.WriteLine("Initial backup test sequence FAILED! Check the logs above for details.");
     }
-    Console.WriteLine("Backup test completed!");
 }
 catch (Exception ex)
 {
-    Console.WriteLine($"An error occurred during the test: {ex.Message}");
+    Console.WriteLine($"An error occurred during the initial test: {ex.Message}");
 }
 
 host.Run();

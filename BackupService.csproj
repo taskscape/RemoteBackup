@@ -10,6 +10,7 @@
 
   <ItemGroup>
     <PackageReference Include="FluentFTP" Version="53.0.2" />
+    <PackageReference Include="MailKit" Version="4.15.1" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.1" />
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.1" />
   </ItemGroup>

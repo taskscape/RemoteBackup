@@ -12,9 +12,22 @@ public class BackupOptions
     public string CurrentSubdirectoryName { get; set; } = "current";
     public string HistorySubdirectoryName { get; set; } = "_history";
     public List<BackupJobOptions> Backups { get; set; } = new();
+    public SmtpOptions Smtp { get; set; } = new();
+    public List<string> NotifyEmails { get; set; } = new();
 
     public TimeSpan RunAtLocalTime =>
         TimeSpan.TryParse(RunAt, CultureInfo.InvariantCulture, out var parsed)
             ? parsed
             : TimeSpan.FromHours(2);
+}
+
+public class SmtpOptions
+{
+    public string Host { get; set; } = string.Empty;
+    public int Port { get; set; } = 587;
+    public string Username { get; set; } = string.Empty;
+    public string Password { get; set; } = string.Empty;
+    public bool EnableSsl { get; set; } = true;
+    public string FromEmail { get; set; } = string.Empty;
+    public string FromName { get; set; } = "Remote Backup Service";
 }

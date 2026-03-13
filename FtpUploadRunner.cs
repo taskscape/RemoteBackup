@@ -5,7 +5,7 @@ namespace BackupService;
 
 public class FtpUploadRunner(ILogger<FtpUploadRunner> logger)
 {
-    public async Task RunJobAsync(
+    public async Task<bool> RunJobAsync(
         BackupJobOptions job,
         BackupOptions options,
         CancellationToken cancellationToken)
@@ -16,19 +16,19 @@ public class FtpUploadRunner(ILogger<FtpUploadRunner> logger)
             if (string.IsNullOrWhiteSpace(job.Host))
             {
                 logger.LogError("Backup '{name}' is missing Host.", job.Name);
-                return;
+                return false;
             }
 
             if (string.IsNullOrWhiteSpace(job.LocalPath))
             {
                 logger.LogError("Backup '{name}' is missing LocalPath.", job.Name);
-                return;
+                return false;
             }
 
             if (!Directory.Exists(job.LocalPath))
             {
                 logger.LogError("Backup '{name}' LocalPath '{path}' does not exist.", job.Name, job.LocalPath);
-                return;
+                return false;
             }
 
             var tempDir = Path.Combine(Path.GetTempPath(), "BackupService", job.Name);
@@ -84,21 +84,25 @@ public class FtpUploadRunner(ILogger<FtpUploadRunner> logger)
             if (status == FtpStatus.Success)
             {
                 logger.LogInformation("Backup '{name}' uploaded successfully.", job.Name);
+                await client.Disconnect(cancellationToken);
+                return true;
             }
             else
             {
                 logger.LogError("Backup '{name}' upload failed with status: {status}", job.Name, status);
+                await client.Disconnect(cancellationToken);
+                return false;
             }
-
-            await client.Disconnect(cancellationToken);
         }
         catch (OperationCanceledException)
         {
             logger.LogWarning("Backup '{name}' was cancelled.", job.Name);
+            return false;
         }
         catch (Exception ex)
         {
             logger.LogError(ex, "FTP Upload Backup '{name}' failed.", job.Name);
+            return false;
         }
         finally
         {
