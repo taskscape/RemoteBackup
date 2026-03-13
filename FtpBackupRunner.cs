@@ -8,7 +8,7 @@ namespace BackupService;
 
 public class FtpBackupRunner(ILogger<FtpBackupRunner> logger)
 {
-    public async Task RunJobAsync(
+    public async Task<bool> RunJobAsync(
         BackupJobOptions job,
         BackupOptions options,
         CancellationToken cancellationToken)
@@ -29,13 +29,13 @@ public class FtpBackupRunner(ILogger<FtpBackupRunner> logger)
             if (string.IsNullOrWhiteSpace(job.Host))
             {
                 logger.LogError("Backup '{name}' is missing Host.", job.Name);
-                return;
+                return false;
             }
 
             if (string.IsNullOrWhiteSpace(job.LocalPath))
             {
                 logger.LogError("Backup '{name}' is missing LocalPath.", job.Name);
-                return;
+                return false;
             }
 
             if (!IsLocalDrivePath(job.LocalPath))
@@ -44,7 +44,7 @@ public class FtpBackupRunner(ILogger<FtpBackupRunner> logger)
                     "Backup '{name}' LocalPath '{path}' is not a local drive path.",
                     job.Name,
                     job.LocalPath);
-                return;
+                return false;
             }
 
             var tempDir = Path.Combine(job.LocalPath, "temp", job.Host);
@@ -102,9 +102,19 @@ public class FtpBackupRunner(ILogger<FtpBackupRunner> logger)
                 remotePath,
                 FtpFolderSyncMode.Mirror,
                 FtpLocalExists.Overwrite,
-                FtpVerify.None);
+                FtpVerify.None,
+                null,
+                progress =>
+                {
+                    if (progress.FileCount > 0)
+                    {
+                        var progressString = $"\r[FTP] {job.Name}: {progress.Progress:F2}% (File {progress.FileIndex + 1}/{progress.FileCount}, {FormatBytes(progress.TransferredBytes)})";
+                        Console.Write(progressString);
+                    }
+                });
+            Console.WriteLine(); // Final newline after progress
 
-            LogResults(job.Name, results);
+            var success = LogResults(job.Name, results);
 
             string zipPath = Path.Combine(archiveDir, DateTime.Now.ToString("yyyy-MM-dd") + ".zip");
 
@@ -126,14 +136,18 @@ public class FtpBackupRunner(ILogger<FtpBackupRunner> logger)
             {
                 Directory.Delete(tempDir, recursive: true);
             }
+
+            return success;
         }   
         catch (OperationCanceledException)
         {
             logger.LogWarning("Backup '{name}' cancelled.", job.Name);
+            return false;
         }
         catch (Exception ex)
         {
             logger.LogError(ex, "Backup '{name}' failed.", job.Name);
+            return false;
         }
     }
 
@@ -169,7 +183,7 @@ private static bool IsLocalDrivePath(string path)
         return FtpEncryptionMode.Explicit;
     }
 
-    private void LogResults(string jobName, List<FtpResult> results)
+    private bool LogResults(string jobName, List<FtpResult> results)
     {
         var failed = results.Count(r => !r.IsSuccess);
         if (failed == 0)
@@ -178,7 +192,7 @@ private static bool IsLocalDrivePath(string path)
                 "Backup '{name}' downloaded {count} items.",
                 jobName,
                 results.Count);
-            return;
+            return true;
         }
 
         logger.LogWarning(
@@ -195,6 +209,8 @@ private static bool IsLocalDrivePath(string path)
                 result.Name,
                 result.Exception?.Message);
         }
+
+        return false;
     }
 
     public static async Task CopyDirectory(
@@ -220,6 +236,20 @@ private static bool IsLocalDrivePath(string path)
             await CopyDirectory(directory, targetSubdir, cancellationToken);
             
         }
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        string[] suffixes = { "B", "KB", "MB", "GB", "TB" };
+        int i = 0;
+        double dblBytes = bytes;
+        while (i < suffixes.Length - 1 && bytes >= 1024)
+        {
+            i++;
+            bytes /= 1024;
+            dblBytes /= 1024;
+        }
+        return $"{dblBytes:F2} {suffixes[i]}";
     }
 
     private void CleanupHistory(
