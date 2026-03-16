@@ -54,26 +54,35 @@ var httpRunner = host.Services.GetRequiredService<HttpBackupRunner>();
 try
 {
     var backupType = backupJob.BackupType?.ToUpper() ?? "FTP";
+    bool success;
     if (backupType == "HTTP")
     {
         Console.WriteLine($"Starting HTTP backup test for '{backupJob.Name}'...");
-        await httpRunner.RunJobAsync(backupJob, backupOptions, CancellationToken.None);
+        success = await httpRunner.RunJobAsync(backupJob, backupOptions, CancellationToken.None);
     }
     else if (backupType == "FTP_UPLOAD")
     {
         Console.WriteLine($"Starting FTP Upload backup test for '{backupJob.Name}'...");
-        await ftpUploadRunner.RunJobAsync(backupJob, backupOptions, CancellationToken.None);
+        success = await ftpUploadRunner.RunJobAsync(backupJob, backupOptions, CancellationToken.None);
     }
     else
     {
         Console.WriteLine($"Starting FTP backup test for '{backupJob.Name}'...");
-        await ftpRunner.RunJobAsync(backupJob, backupOptions, CancellationToken.None);
+        success = await ftpRunner.RunJobAsync(backupJob, backupOptions, CancellationToken.None);
     }
-    Console.WriteLine("Backup test completed!");
+
+    if (success)
+    {
+        Console.WriteLine("Backup completed!");
+    }
+    else
+    {
+        Console.WriteLine("Backup failed! Check the logs for more details.");
+    }
 }
 catch (Exception ex)
 {
-    Console.WriteLine($"An error occurred during the test: {ex.Message}");
+    Console.WriteLine($"Backup failed! Reason: {ex.Message}");
 }
 
 host.Run();

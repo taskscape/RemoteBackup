@@ -5,7 +5,7 @@ namespace BackupService;
 
 public class FtpUploadRunner(ILogger<FtpUploadRunner> logger)
 {
-    public async Task RunJobAsync(
+    public async Task<bool> RunJobAsync(
         BackupJobOptions job,
         BackupOptions options,
         CancellationToken cancellationToken)
@@ -16,19 +16,19 @@ public class FtpUploadRunner(ILogger<FtpUploadRunner> logger)
             if (string.IsNullOrWhiteSpace(job.Host))
             {
                 logger.LogError("Backup '{name}' is missing Host.", job.Name);
-                return;
+                return false;
             }
 
             if (string.IsNullOrWhiteSpace(job.LocalPath))
             {
                 logger.LogError("Backup '{name}' is missing LocalPath.", job.Name);
-                return;
+                return false;
             }
 
             if (!Directory.Exists(job.LocalPath))
             {
                 logger.LogError("Backup '{name}' LocalPath '{path}' does not exist.", job.Name, job.LocalPath);
-                return;
+                return false;
             }
 
             var tempDir = Path.Combine(Path.GetTempPath(), "BackupService", job.Name);
@@ -50,7 +50,7 @@ public class FtpUploadRunner(ILogger<FtpUploadRunner> logger)
             await Task.Run(() => ZipFile.CreateFromDirectory(job.LocalPath, zipFilePath, CompressionLevel.Optimal, false), cancellationToken);
 
             var fileInfo = new FileInfo(zipFilePath);
-            logger.LogInformation("Created zip archive: {path} ({sizeMB:F2} MB)", zipFilePath, fileInfo.Length / 1024.0 / 1024.0);
+            logger.LogInformation("Created zip archive: {path} ({size})", zipFilePath, FormatBytes(fileInfo.Length));
 
             logger.LogInformation("Connecting to {host}:{port} for backup '{name}'...", job.Host, job.Port, job.Name);
 
@@ -75,30 +75,47 @@ public class FtpUploadRunner(ILogger<FtpUploadRunner> logger)
             await client.Connect(cancellationToken);
             
             var remoteDir = string.IsNullOrWhiteSpace(job.RemotePath) ? "/" : job.RemotePath;
-            var remoteFilePath = Path.Combine(remoteDir, zipFileName).Replace("\\", "/");
+            var remoteFilePath = (remoteDir.EndsWith("/") ? remoteDir + zipFileName : remoteDir + "/" + zipFileName).Replace("\\", "/");
 
             logger.LogInformation("Uploading backup to '{remotePath}'...", remoteFilePath);
             
-            var status = await client.UploadFile(zipFilePath, remoteFilePath, FtpRemoteExists.Overwrite, true, FtpVerify.Retry, null, cancellationToken);
+            var status = await client.UploadFile(zipFilePath, remoteFilePath, FtpRemoteExists.Overwrite, true, FtpVerify.Retry, 
+                new Progress<FtpProgress>(progress =>
+                {
+                    string totalStr = "?";
+                    if (progress.Progress > 0)
+                    {
+                        long total = (long)(progress.TransferredBytes / (progress.Progress / 100.0));
+                        totalStr = FormatBytes(total);
+                    }
+                    var progressString = $"\r[UPLOAD] {job.Name}: {progress.Progress:F2}% ({FormatBytes(progress.TransferredBytes)} / {totalStr})";
+                    Console.Write(progressString);
+                }), cancellationToken);
+
+            Console.WriteLine(); // Final newline after progress
 
             if (status == FtpStatus.Success)
             {
                 logger.LogInformation("Backup '{name}' uploaded successfully.", job.Name);
+                await client.Disconnect(cancellationToken);
+                return true;
             }
             else
             {
                 logger.LogError("Backup '{name}' upload failed with status: {status}", job.Name, status);
+                await client.Disconnect(cancellationToken);
+                return false;
             }
-
-            await client.Disconnect(cancellationToken);
         }
         catch (OperationCanceledException)
         {
             logger.LogWarning("Backup '{name}' was cancelled.", job.Name);
+            return false;
         }
         catch (Exception ex)
         {
             logger.LogError(ex, "FTP Upload Backup '{name}' failed.", job.Name);
+            return false;
         }
         finally
         {
@@ -114,6 +131,20 @@ public class FtpUploadRunner(ILogger<FtpUploadRunner> logger)
                 }
             }
         }
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        string[] suffixes = { "B", "KB", "MB", "GB", "TB" };
+        int i = 0;
+        double dblBytes = bytes;
+        while (i < suffixes.Length - 1 && bytes >= 1024)
+        {
+            i++;
+            bytes /= 1024;
+            dblBytes /= 1024;
+        }
+        return $"{dblBytes:F2} {suffixes[i]}";
     }
 
     private static FtpEncryptionMode ParseEncryptionMode(string? mode)

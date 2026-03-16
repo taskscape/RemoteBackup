@@ -10,7 +10,7 @@ public class HttpBackupRunner(ILogger<HttpBackupRunner> logger)
         Timeout = TimeSpan.FromMinutes(30) // Long timeout for backup generation
     };
 
-    public async Task RunJobAsync(
+    public async Task<bool> RunJobAsync(
         BackupJobOptions job,
         BackupOptions options,
         CancellationToken cancellationToken)
@@ -20,28 +20,31 @@ public class HttpBackupRunner(ILogger<HttpBackupRunner> logger)
             if (string.IsNullOrWhiteSpace(job.EndpointUrl))
             {
                 logger.LogError("Backup '{name}' is missing EndpointUrl.", job.Name);
-                return;
+                return false;
             }
 
             var archiveDir = Path.Combine(job.LocalPath, job.Name);
             Directory.CreateDirectory(archiveDir);
 
             // 1. Run Database Backup
-            await ExecuteBackupActionAsync(job, "db", archiveDir, cancellationToken);
+            var dbSuccess = await ExecuteBackupActionAsync(job, "db", archiveDir, cancellationToken);
 
             // 2. Run Files Backup
-            await ExecuteBackupActionAsync(job, "files", archiveDir, cancellationToken);
+            var filesSuccess = await ExecuteBackupActionAsync(job, "files", archiveDir, cancellationToken);
 
             // 3. Cleanup old local files
             CleanupLocalBackups(archiveDir, job.RetentionDays);
+
+            return dbSuccess && filesSuccess;
         }
         catch (Exception ex)
         {
             logger.LogError(ex, "HTTP Backup '{name}' failed.", job.Name);
+            return false;
         }
     }
 
-    private async Task ExecuteBackupActionAsync(
+    private async Task<bool> ExecuteBackupActionAsync(
         BackupJobOptions job, 
         string action, 
         string archiveDir, 
@@ -63,7 +66,7 @@ public class HttpBackupRunner(ILogger<HttpBackupRunner> logger)
         {
             var error = await response.Content.ReadAsStringAsync(ct);
             logger.LogError("Server returned error for {action}: {code} - {error}", action, response.StatusCode, error);
-            return;
+            return false;
         }
 
         var result = await response.Content.ReadFromJsonAsync<BackupServerResponse>(cancellationToken: ct);
@@ -76,23 +79,76 @@ public class HttpBackupRunner(ILogger<HttpBackupRunner> logger)
                 result.File, 
                 result.Size,
                 result.DownloadUrl);
-            await DownloadFileAsync(result.DownloadUrl, Path.Combine(archiveDir, result.File), ct);
-            logger.LogInformation("Downloaded {file} successfully.", result.File);
+            var downloadSuccess = await DownloadFileAsync(result.DownloadUrl, Path.Combine(archiveDir, result.File), ct);
+            if (downloadSuccess)
+            {
+                logger.LogInformation("Downloaded {file} successfully.", result.File);
+            }
+            return downloadSuccess;
         }
         else
         {
             logger.LogError("Backup {action} failed: {msg}", action, result?.Message ?? "Unknown error");
+            return false;
         }
     }
 
-    private async Task DownloadFileAsync(string url, string destinationPath, CancellationToken ct)
+    private async Task<bool> DownloadFileAsync(string url, string destinationPath, CancellationToken ct)
     {
         using var response = await _httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
-        response.EnsureSuccessStatusCode();
+        
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorContent = await response.Content.ReadAsStringAsync(ct);
+            logger.LogError("Failed to start download from {url}. Status: {code}, Message: {error}", url, response.StatusCode, errorContent);
+            Console.WriteLine($"[ERROR] Failed to download {Path.GetFileName(destinationPath)}: {response.StatusCode}");
+            return false;
+        }
 
+        var totalBytes = response.Content.Headers.ContentLength;
         using var stream = await response.Content.ReadAsStreamAsync(ct);
         using var fileStream = new FileStream(destinationPath, FileMode.Create, FileAccess.Write, FileShare.None, 8192, true);
-        await stream.CopyToAsync(fileStream, ct);
+
+        var buffer = new byte[8192];
+        var totalRead = 0L;
+        int read;
+        var fileName = Path.GetFileName(destinationPath);
+
+        logger.LogInformation("Starting download of {file} ({size})...", fileName, FormatBytes(totalBytes ?? 0));
+
+        while ((read = await stream.ReadAsync(buffer, 0, buffer.Length, ct)) > 0)
+        {
+            await fileStream.WriteAsync(buffer, 0, read, ct);
+            totalRead += read;
+
+            if (totalBytes.HasValue)
+            {
+                var progress = (double)totalRead / totalBytes.Value * 100;
+                var progressString = $"\r[DOWNLOAD] {fileName}: {progress:F2}% ({FormatBytes(totalRead)} / {FormatBytes(totalBytes.Value)})";
+                Console.Write(progressString);
+            }
+            else
+            {
+                Console.Write($"\r[DOWNLOAD] {fileName}: {FormatBytes(totalRead)} received");
+            }
+        }
+        Console.WriteLine(); // Final newline after progress
+        logger.LogInformation("Download of {file} completed successfully.", fileName);
+        return true;
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        string[] suffixes = { "B", "KB", "MB", "GB", "TB" };
+        int i = 0;
+        double dblBytes = bytes;
+        while (i < suffixes.Length - 1 && bytes >= 1024)
+        {
+            i++;
+            bytes /= 1024;
+            dblBytes /= 1024;
+        }
+        return $"{dblBytes:F2} {suffixes[i]}";
     }
 
     private void CleanupLocalBackups(string dir, int days)

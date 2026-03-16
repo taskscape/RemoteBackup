@@ -39,36 +39,47 @@ public class BackupCoordinator(
 
             try
             {
+                bool success;
                 if (backupType == "HTTP")
                 {
-                    await httpRunner.RunJobAsync(job, _options, linkedCts.Token);
+                    success = await httpRunner.RunJobAsync(job, _options, linkedCts.Token);
                 }
                 else if (backupType == "FTP_UPLOAD")
                 {
-                    await ftpUploadRunner.RunJobAsync(job, _options, linkedCts.Token);
+                    success = await ftpUploadRunner.RunJobAsync(job, _options, linkedCts.Token);
                 }
                 else
                 {
-                    await ftpRunner.RunJobAsync(job, _options, linkedCts.Token);
+                    success = await ftpRunner.RunJobAsync(job, _options, linkedCts.Token);
                 }
 
                 var duration = DateTimeOffset.Now - started;
-                logger.LogInformation(
-                    "Backup '{name}' completed in {duration}.",
-                    job.Name,
-                    duration);
+                if (success)
+                {
+                    logger.LogInformation(
+                        "Backup '{name}' completed successfully in {duration}.",
+                        job.Name,
+                        duration);
+                }
+                else
+                {
+                    logger.LogError(
+                        "Backup '{name}' failed (check individual step logs for details) after {duration}.",
+                        job.Name,
+                        duration);
+                }
             }
             catch (OperationCanceledException) when (
                 timeoutCts.IsCancellationRequested && !stoppingToken.IsCancellationRequested)
             {
                 logger.LogError(
-                    "Backup '{name}' timed out after {timeoutMinutes} minutes.",
+                    "Backup '{name}' failed! Reason: Timed out after {timeoutMinutes} minutes.",
                     job.Name,
                     timeoutMinutes);
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Backup '{name}' failed.", job.Name);
+                logger.LogError(ex, "Backup '{name}' failed! Reason: {message}", job.Name, ex.Message);
             }
         }
     }
