@@ -61,15 +61,24 @@ public class HttpBackupRunner(ILogger<HttpBackupRunner> logger)
         }
 
         using var response = await _httpClient.SendAsync(request, ct);
+        var responseContent = await response.Content.ReadAsStringAsync(ct);
         
         if (!response.IsSuccessStatusCode)
         {
-            var error = await response.Content.ReadAsStringAsync(ct);
-            logger.LogError("Server returned error for {action}: {code} - {error}", action, response.StatusCode, error);
+            logger.LogError("Server returned error for {action}: {code} - {error}", action, response.StatusCode, responseContent);
             return false;
         }
 
-        var result = await response.Content.ReadFromJsonAsync<BackupServerResponse>(cancellationToken: ct);
+        BackupServerResponse? result;
+        try
+        {
+            result = System.Text.Json.JsonSerializer.Deserialize<BackupServerResponse>(responseContent);
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            logger.LogError("Server returned invalid JSON for {action}. Response content: {content}", action, responseContent);
+            return false;
+        }
 
         if (result?.Status == "success" && !string.IsNullOrEmpty(result.DownloadUrl))
         {

@@ -328,5 +328,36 @@ Press Ctrl+C to stop it.
 - **Event Log**: If Event Log entries do not appear, run the service once with elevated permissions or pre-create the event source.
 - **UNC Paths**: `LocalPath` must be a local drive path (for example `D:\Backups\SiteA`); UNC paths are rejected by the runner.
 
----
-Documentation created for RemoteBackup Service v1.0.0
+## Email Notifications
+
+The service can send email notifications when a backup job fails.
+
+### Configuration
+
+Add the `Smtp` section and `NotifyEmails` to your `appsettings.json`:
+
+```json
+"BackupOptions": {
+  "NotifyEmails": [ "global-admin@example.com" ],
+  "Smtp": {
+    "Host": "smtp.gmail.com",
+    "Port": 587,
+    "Username": "your-email@gmail.com",
+    "Password": "your-app-password",
+    "EnableSsl": true,
+    "FromEmail": "your-email@gmail.com",
+    "FromName": "Remote Backup Monitor"
+  },
+  "Backups": [
+    {
+      "Name": "MyJob",
+      "NotifyOnFailure": true,
+      "NotifyEmails": [ "job-specific-admin@example.com" ]
+    }
+  ]
+}
+```
+
+- **Global Recipients**: Emails listed in the main `BackupOptions.NotifyEmails` will receive notifications for ALL failed jobs.
+- **Job-specific Recipients**: Emails listed in a specific backup job's `NotifyEmails` will receive notifications ONLY for that job.
+- **NotifyOnFailure**: Set to `true` (default) to enable notifications for a specific job.

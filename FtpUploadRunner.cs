@@ -56,10 +56,13 @@ public class FtpUploadRunner(ILogger<FtpUploadRunner> logger)
 
             using var client = new AsyncFtpClient(job.Host, job.Username, job.Password, job.Port);
             client.Config.EncryptionMode = ParseEncryptionMode(job.Encryption);
-            client.Config.DataConnectionType = job.Passive ? FtpDataConnectionType.PASV : FtpDataConnectionType.PORT;
-            client.Config.ConnectTimeout = 15000;
-            client.Config.ReadTimeout = 15000;
+            client.Config.DataConnectionType = FtpDataConnectionType.PASV;
+            client.Config.ConnectTimeout = 120000;
+            client.Config.ReadTimeout = 120000;
+            client.Config.DataConnectionConnectTimeout = 120000;
+            client.Config.DataConnectionReadTimeout = 120000;
             client.Config.ValidateAnyCertificate = job.AllowInvalidCertificate;
+            client.Config.DataConnectionEncryption = false; // Disable data channel encryption for better stability on home.pl
 
             if (!job.AllowInvalidCertificate)
             {

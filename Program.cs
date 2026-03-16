@@ -4,13 +4,11 @@ using Microsoft.Extensions.Logging.EventLog;
 var builder = Host.CreateApplicationBuilder(args);
 var backupOptions = builder.Configuration.GetSection("BackupOptions").Get<BackupOptions>();
 
-    if (!backupOptions.Backups.Any())
-    {
-        Console.WriteLine("No backups found in configuration!");
-        return; 
-    }
-
-var backupJob = backupOptions.Backups.First();
+if (backupOptions == null || !backupOptions.Backups.Any())
+{
+    Console.WriteLine("No backups found in configuration!");
+    return; 
+}
 
 builder.Services.Configure<BackupOptions>(
     builder.Configuration.GetSection(BackupOptions.SectionName));
@@ -20,6 +18,7 @@ builder.Services.Configure<FileLoggerOptions>(
 builder.Services.AddSingleton<FtpBackupRunner>();
 builder.Services.AddSingleton<FtpUploadRunner>();
 builder.Services.AddSingleton<HttpBackupRunner>();
+builder.Services.AddSingleton<EmailNotificationService>();
 builder.Services.AddSingleton<BackupCoordinator>();
 builder.Services.AddHostedService<Worker>();
 
@@ -47,42 +46,25 @@ ServiceScheduler.StartServiceAtConfiguredTime(starHour, startMinute, () =>
 
 var host = builder.Build();
 
-var ftpRunner = host.Services.GetRequiredService<FtpBackupRunner>();
-var ftpUploadRunner = host.Services.GetRequiredService<FtpUploadRunner>();
-var httpRunner = host.Services.GetRequiredService<HttpBackupRunner>();
+var coordinator = host.Services.GetRequiredService<BackupCoordinator>();
 
 try
 {
-    var backupType = backupJob.BackupType?.ToUpper() ?? "FTP";
-    bool success;
-    if (backupType == "HTTP")
+    Console.WriteLine("Starting initial backup test for all configured jobs...");
+    bool allSuccessful = await coordinator.RunBackupsAsync(CancellationToken.None);
+    
+    if (allSuccessful)
     {
-        Console.WriteLine($"Starting HTTP backup test for '{backupJob.Name}'...");
-        success = await httpRunner.RunJobAsync(backupJob, backupOptions, CancellationToken.None);
-    }
-    else if (backupType == "FTP_UPLOAD")
-    {
-        Console.WriteLine($"Starting FTP Upload backup test for '{backupJob.Name}'...");
-        success = await ftpUploadRunner.RunJobAsync(backupJob, backupOptions, CancellationToken.None);
+        Console.WriteLine("Initial backup test sequence completed successfully!");
     }
     else
     {
-        Console.WriteLine($"Starting FTP backup test for '{backupJob.Name}'...");
-        success = await ftpRunner.RunJobAsync(backupJob, backupOptions, CancellationToken.None);
-    }
-
-    if (success)
-    {
-        Console.WriteLine("Backup completed!");
-    }
-    else
-    {
-        Console.WriteLine("Backup failed! Check the logs for more details.");
+        Console.WriteLine("Initial backup test sequence FAILED! Check the logs above for details.");
     }
 }
 catch (Exception ex)
 {
-    Console.WriteLine($"Backup failed! Reason: {ex.Message}");
+    Console.WriteLine($"An error occurred during the initial test: {ex.Message}");
 }
 
 host.Run();
