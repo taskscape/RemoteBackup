@@ -1,4 +1,5 @@
 using MailKit.Net.Smtp;
+using MailKit.Security;
 using Microsoft.Extensions.Options;
 using MimeKit;
 
@@ -53,7 +54,8 @@ public class EmailNotificationService(
             // In some environments, we might need to skip certificate validation
             client.ServerCertificateValidationCallback = (s, c, h, e) => true;
 
-            await client.ConnectAsync(_options.Smtp.Host, _options.Smtp.Port, _options.Smtp.EnableSsl);
+            var secureSocketOptions = _options.Smtp.EnableSsl ? SecureSocketOptions.Auto : SecureSocketOptions.None;
+            await client.ConnectAsync(_options.Smtp.Host, _options.Smtp.Port, secureSocketOptions);
             
             if (!string.IsNullOrEmpty(_options.Smtp.Username))
             {
