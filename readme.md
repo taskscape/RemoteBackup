@@ -201,7 +201,8 @@ $env:BackupOptions__Backups__0__Password = "password"
         "LocalPath": "C:\\ImportantData",
         "RemotePath": "/server1/uploads",
         "Encryption": "Explicit",
-        "Passive": true
+        "Passive": true,
+        "AllowInvalidCertificate": true
       }
     ]
   }
