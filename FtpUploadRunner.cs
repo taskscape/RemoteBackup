@@ -50,7 +50,7 @@ public class FtpUploadRunner(ILogger<FtpUploadRunner> logger)
             await Task.Run(() => ZipFile.CreateFromDirectory(job.LocalPath, zipFilePath, CompressionLevel.Optimal, false), cancellationToken);
 
             var fileInfo = new FileInfo(zipFilePath);
-            logger.LogInformation("Created zip archive: {path} ({sizeMB:F2} MB)", zipFilePath, fileInfo.Length / 1024.0 / 1024.0);
+            logger.LogInformation("Created zip archive: {path} ({size})", zipFilePath, FormatBytes(fileInfo.Length));
 
             logger.LogInformation("Connecting to {host}:{port} for backup '{name}'...", job.Host, job.Port, job.Name);
 
@@ -78,11 +78,24 @@ public class FtpUploadRunner(ILogger<FtpUploadRunner> logger)
             await client.Connect(cancellationToken);
             
             var remoteDir = string.IsNullOrWhiteSpace(job.RemotePath) ? "/" : job.RemotePath;
-            var remoteFilePath = Path.Combine(remoteDir, zipFileName).Replace("\\", "/");
+            var remoteFilePath = (remoteDir.EndsWith("/") ? remoteDir + zipFileName : remoteDir + "/" + zipFileName).Replace("\\", "/");
 
             logger.LogInformation("Uploading backup to '{remotePath}'...", remoteFilePath);
             
-            var status = await client.UploadFile(zipFilePath, remoteFilePath, FtpRemoteExists.Overwrite, true, FtpVerify.Retry, null, cancellationToken);
+            var status = await client.UploadFile(zipFilePath, remoteFilePath, FtpRemoteExists.Overwrite, true, FtpVerify.Retry, 
+                new Progress<FtpProgress>(progress =>
+                {
+                    string totalStr = "?";
+                    if (progress.Progress > 0)
+                    {
+                        long total = (long)(progress.TransferredBytes / (progress.Progress / 100.0));
+                        totalStr = FormatBytes(total);
+                    }
+                    var progressString = $"\r[UPLOAD] {job.Name}: {progress.Progress:F2}% ({FormatBytes(progress.TransferredBytes)} / {totalStr})";
+                    Console.Write(progressString);
+                }), cancellationToken);
+
+            Console.WriteLine(); // Final newline after progress
 
             if (status == FtpStatus.Success)
             {
@@ -121,6 +134,20 @@ public class FtpUploadRunner(ILogger<FtpUploadRunner> logger)
                 }
             }
         }
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        string[] suffixes = { "B", "KB", "MB", "GB", "TB" };
+        int i = 0;
+        double dblBytes = bytes;
+        while (i < suffixes.Length - 1 && bytes >= 1024)
+        {
+            i++;
+            bytes /= 1024;
+            dblBytes /= 1024;
+        }
+        return $"{dblBytes:F2} {suffixes[i]}";
     }
 
     private static FtpEncryptionMode ParseEncryptionMode(string? mode)

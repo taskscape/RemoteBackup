@@ -12,6 +12,11 @@ if ($csproj.Project.PropertyGroup.Version) {
     $Version = $csproj.Project.PropertyGroup.Version
 }
 
+# Override version if running in GitHub Actions
+if ($env:GITHUB_RUN_NUMBER) {
+    $Version = "1.0." + $env:GITHUB_RUN_NUMBER
+}
+
 Write-Host "--- 1. Cleaning up old build artifacts ---" -ForegroundColor Cyan
 if (Test-Path $PublishDir) { Remove-Item -Recurse -Force $PublishDir }
 if (Test-Path "Installer\Output") { Remove-Item -Recurse -Force "Installer\Output" }
@@ -26,17 +31,25 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "--- 3. Building Inno Setup Installer ---" -ForegroundColor Cyan
-if (Test-Path $InnoSetupPath) {
-    # Pass the version to Inno Setup
-    & $InnoSetupPath "/dAppVersion=$Version" "Installer\RemoteBackup.iss"
+$ISCC = Get-Command iscc -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
+if (-not $ISCC -and (Test-Path $InnoSetupPath)) {
+    $ISCC = $InnoSetupPath
+}
+
+if ($ISCC) {
+    Write-Host "Using ISCC at: $ISCC"
+    & $ISCC "/dAppVersion=$Version" "Installer\RemoteBackup.iss"
 } else {
-    Write-Warning "Inno Setup Compiler (ISCC.exe) not found at $InnoSetupPath."
-    Write-Host "Please ensure Inno Setup 6 is installed or update the path in this script."
+    Write-Error "Inno Setup Compiler (ISCC.exe) not found in PATH or at $InnoSetupPath."
+    exit 1
 }
 
 Write-Host "--- Done! ---" -ForegroundColor Green
 if (Test-Path "Installer\Output\RemoteBackupSetup.exe") {
     Write-Host "Installer created: Installer\Output\RemoteBackupSetup.exe" -ForegroundColor Green
     Write-Host "App Version: $Version" -ForegroundColor Green
+} else {
+    Write-Error "Installer file was not created!"
+    exit 1
 }
 

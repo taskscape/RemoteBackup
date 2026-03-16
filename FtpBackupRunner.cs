@@ -102,7 +102,17 @@ public class FtpBackupRunner(ILogger<FtpBackupRunner> logger)
                 remotePath,
                 FtpFolderSyncMode.Mirror,
                 FtpLocalExists.Overwrite,
-                FtpVerify.None);
+                FtpVerify.None,
+                null,
+                progress =>
+                {
+                    if (progress.FileCount > 0)
+                    {
+                        var progressString = $"\r[FTP] {job.Name}: {progress.Progress:F2}% (File {progress.FileIndex + 1}/{progress.FileCount}, {FormatBytes(progress.TransferredBytes)})";
+                        Console.Write(progressString);
+                    }
+                });
+            Console.WriteLine(); // Final newline after progress
 
             var success = LogResults(job.Name, results);
 
@@ -226,6 +236,20 @@ private static bool IsLocalDrivePath(string path)
             await CopyDirectory(directory, targetSubdir, cancellationToken);
             
         }
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        string[] suffixes = { "B", "KB", "MB", "GB", "TB" };
+        int i = 0;
+        double dblBytes = bytes;
+        while (i < suffixes.Length - 1 && bytes >= 1024)
+        {
+            i++;
+            bytes /= 1024;
+            dblBytes /= 1024;
+        }
+        return $"{dblBytes:F2} {suffixes[i]}";
     }
 
     private void CleanupHistory(

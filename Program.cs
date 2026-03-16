@@ -4,13 +4,11 @@ using Microsoft.Extensions.Logging.EventLog;
 var builder = Host.CreateApplicationBuilder(args);
 var backupOptions = builder.Configuration.GetSection("BackupOptions").Get<BackupOptions>();
 
-    if (!backupOptions.Backups.Any())
-    {
-        Console.WriteLine("No backups found in configuration!");
-        return; 
-    }
-
-var backupJob = backupOptions.Backups.First();
+if (backupOptions == null || !backupOptions.Backups.Any())
+{
+    Console.WriteLine("No backups found in configuration!");
+    return; 
+}
 
 builder.Services.Configure<BackupOptions>(
     builder.Configuration.GetSection(BackupOptions.SectionName));

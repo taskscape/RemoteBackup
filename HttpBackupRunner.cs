@@ -89,6 +89,10 @@ public class HttpBackupRunner(ILogger<HttpBackupRunner> logger)
                 result.Size,
                 result.DownloadUrl);
             var downloadSuccess = await DownloadFileAsync(result.DownloadUrl, Path.Combine(archiveDir, result.File), ct);
+            if (downloadSuccess)
+            {
+                logger.LogInformation("Downloaded {file} successfully.", result.File);
+            }
             return downloadSuccess;
         }
         else
@@ -101,12 +105,59 @@ public class HttpBackupRunner(ILogger<HttpBackupRunner> logger)
     private async Task<bool> DownloadFileAsync(string url, string destinationPath, CancellationToken ct)
     {
         using var response = await _httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
-        if (!response.IsSuccessStatusCode) return false;
+        
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorContent = await response.Content.ReadAsStringAsync(ct);
+            logger.LogError("Failed to start download from {url}. Status: {code}, Message: {error}", url, response.StatusCode, errorContent);
+            Console.WriteLine($"[ERROR] Failed to download {Path.GetFileName(destinationPath)}: {response.StatusCode}");
+            return false;
+        }
 
+        var totalBytes = response.Content.Headers.ContentLength;
         using var stream = await response.Content.ReadAsStreamAsync(ct);
         using var fileStream = new FileStream(destinationPath, FileMode.Create, FileAccess.Write, FileShare.None, 8192, true);
-        await stream.CopyToAsync(fileStream, ct);
+
+        var buffer = new byte[8192];
+        var totalRead = 0L;
+        int read;
+        var fileName = Path.GetFileName(destinationPath);
+
+        logger.LogInformation("Starting download of {file} ({size})...", fileName, FormatBytes(totalBytes ?? 0));
+
+        while ((read = await stream.ReadAsync(buffer, 0, buffer.Length, ct)) > 0)
+        {
+            await fileStream.WriteAsync(buffer, 0, read, ct);
+            totalRead += read;
+
+            if (totalBytes.HasValue)
+            {
+                var progress = (double)totalRead / totalBytes.Value * 100;
+                var progressString = $"\r[DOWNLOAD] {fileName}: {progress:F2}% ({FormatBytes(totalRead)} / {FormatBytes(totalBytes.Value)})";
+                Console.Write(progressString);
+            }
+            else
+            {
+                Console.Write($"\r[DOWNLOAD] {fileName}: {FormatBytes(totalRead)} received");
+            }
+        }
+        Console.WriteLine(); // Final newline after progress
+        logger.LogInformation("Download of {file} completed successfully.", fileName);
         return true;
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        string[] suffixes = { "B", "KB", "MB", "GB", "TB" };
+        int i = 0;
+        double dblBytes = bytes;
+        while (i < suffixes.Length - 1 && bytes >= 1024)
+        {
+            i++;
+            bytes /= 1024;
+            dblBytes /= 1024;
+        }
+        return $"{dblBytes:F2} {suffixes[i]}";
     }
 
     private void CleanupLocalBackups(string dir, int days)
