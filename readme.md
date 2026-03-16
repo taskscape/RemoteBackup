@@ -328,11 +328,6 @@ Press Ctrl+C to stop it.
 - **Event Log**: If Event Log entries do not appear, run the service once with elevated permissions or pre-create the event source.
 - **UNC Paths**: `LocalPath` must be a local drive path (for example `D:\Backups\SiteA`); UNC paths are rejected by the runner.
 
----
-Documentation created for RemoteBackup Service v1.0.0
-
----
-
 ## Email Notifications
 
 The service can send email notifications when a backup job fails.
@@ -366,9 +361,3 @@ Add the `Smtp` section and `NotifyEmails` to your `appsettings.json`:
 - **Global Recipients**: Emails listed in the main `BackupOptions.NotifyEmails` will receive notifications for ALL failed jobs.
 - **Job-specific Recipients**: Emails listed in a specific backup job's `NotifyEmails` will receive notifications ONLY for that job.
 - **NotifyOnFailure**: Set to `true` (default) to enable notifications for a specific job.
-
-### SMTP for Gmail
-To use Gmail:
-1. Enable 2FA on your Google Account.
-2. Generate an **App Password**.
-3. Use `smtp.gmail.com`, port `587`, and `EnableSsl: true`.
