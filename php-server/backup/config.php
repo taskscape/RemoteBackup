@@ -26,6 +26,7 @@ return [
     'fs' => [
         'source_dir' => realpath(__DIR__ . '/../'), // Directory to backup (default is one level up)
         'exclude_dirs' => [
+            'archive',
             'backup',
             '.git',
             'node_modules',

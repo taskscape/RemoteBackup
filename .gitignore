@@ -1,4 +1,10 @@
-﻿obj
+obj
 .vs
 bin
 .claude
+publish/
+logs/
+Installer/Output/
+*.exe
+*.pdb
+*.log
