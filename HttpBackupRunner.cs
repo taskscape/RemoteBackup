@@ -10,6 +10,14 @@ public class HttpBackupRunner(ILogger<HttpBackupRunner> logger)
         Timeout = TimeSpan.FromMinutes(30) // Long timeout for backup generation
     };
 
+    private readonly HttpClient _unsecureHttpClient = new(new HttpClientHandler
+    {
+        ServerCertificateCustomValidationCallback = (message, cert, chain, errors) => true
+    })
+    {
+        Timeout = TimeSpan.FromMinutes(30)
+    };
+
     public async Task<bool> RunJobAsync(
         BackupJobOptions job,
         BackupOptions options,
@@ -26,11 +34,13 @@ public class HttpBackupRunner(ILogger<HttpBackupRunner> logger)
             var archiveDir = Path.Combine(job.LocalPath, job.Name);
             Directory.CreateDirectory(archiveDir);
 
+            var client = job.AllowInvalidCertificate ? _unsecureHttpClient : _httpClient;
+
             // 1. Run Database Backup
-            var dbSuccess = await ExecuteBackupActionAsync(job, "db", archiveDir, cancellationToken);
+            var dbSuccess = await ExecuteBackupActionAsync(client, job, "db", archiveDir, cancellationToken);
 
             // 2. Run Files Backup
-            var filesSuccess = await ExecuteBackupActionAsync(job, "files", archiveDir, cancellationToken);
+            var filesSuccess = await ExecuteBackupActionAsync(client, job, "files", archiveDir, cancellationToken);
 
             // 3. Cleanup old local files
             CleanupLocalBackups(archiveDir, job.RetentionDays);
@@ -45,6 +55,7 @@ public class HttpBackupRunner(ILogger<HttpBackupRunner> logger)
     }
 
     private async Task<bool> ExecuteBackupActionAsync(
+        HttpClient client,
         BackupJobOptions job, 
         string action, 
         string archiveDir, 
@@ -60,7 +71,7 @@ public class HttpBackupRunner(ILogger<HttpBackupRunner> logger)
             request.Headers.Add("X-Backup-Token", job.ApiToken);
         }
 
-        using var response = await _httpClient.SendAsync(request, ct);
+        using var response = await client.SendAsync(request, ct);
         var responseContent = await response.Content.ReadAsStringAsync(ct);
         
         if (!response.IsSuccessStatusCode)
@@ -88,7 +99,7 @@ public class HttpBackupRunner(ILogger<HttpBackupRunner> logger)
                 result.File, 
                 result.Size,
                 result.DownloadUrl);
-            var downloadSuccess = await DownloadFileAsync(result.DownloadUrl, Path.Combine(archiveDir, result.File), ct);
+            var downloadSuccess = await DownloadFileAsync(client, result.DownloadUrl, Path.Combine(archiveDir, result.File), ct);
             if (downloadSuccess)
             {
                 logger.LogInformation("Downloaded {file} successfully.", result.File);
@@ -102,9 +113,9 @@ public class HttpBackupRunner(ILogger<HttpBackupRunner> logger)
         }
     }
 
-    private async Task<bool> DownloadFileAsync(string url, string destinationPath, CancellationToken ct)
+    private async Task<bool> DownloadFileAsync(HttpClient client, string url, string destinationPath, CancellationToken ct)
     {
-        using var response = await _httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
+        using var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
         
         if (!response.IsSuccessStatusCode)
         {
