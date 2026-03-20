@@ -36,20 +36,51 @@ public class HttpBackupRunner(ILogger<HttpBackupRunner> logger)
 
             var client = job.AllowInvalidCertificate ? _unsecureHttpClient : _httpClient;
 
-            // 1. Run Database Backup
-            var dbSuccess = await ExecuteBackupActionAsync(client, job, "db", archiveDir, cancellationToken);
+            var dbSuccess = false;
+            var dbAttempted = false;
+            if (job.IncludeDatabase)
+            {
+                dbAttempted = true;
+                // 1. Run Database Backup
+                dbSuccess = await ExecuteBackupActionAsync(client, job, "db", archiveDir, cancellationToken);
+            }
+            else
+            {
+                logger.LogInformation("Skipping database backup for '{name}' (IncludeDatabase = false).", job.Name);
+            }
 
-            // 2. Run Files Backup
-            var filesSuccess = await ExecuteBackupActionAsync(client, job, "files", archiveDir, cancellationToken);
+            var filesSuccess = false;
+            var filesAttempted = false;
+            if (job.IncludeFiles)
+            {
+                filesAttempted = true;
+                // 2. Run Files Backup
+                filesSuccess = await ExecuteBackupActionAsync(client, job, "files", archiveDir, cancellationToken);
+            }
+            else
+            {
+                logger.LogInformation("Skipping files backup for '{name}' (IncludeFiles = false).", job.Name);
+            }
 
             // 3. Cleanup old local files
             CleanupLocalBackups(archiveDir, job.RetentionDays);
 
-            return dbSuccess && filesSuccess;
+            // Return success if all ATTEMPTED backups succeeded
+            var allSucceeded = (!dbAttempted || dbSuccess) && (!filesAttempted || filesSuccess);
+            
+            if (!allSucceeded)
+            {
+                logger.LogWarning("HTTP Backup '{name}' partially failed. DB: {db}, Files: {files}", 
+                    job.Name, 
+                    dbAttempted ? (dbSuccess ? "Success" : "Failed") : "Skipped",
+                    filesAttempted ? (filesSuccess ? "Success" : "Failed") : "Skipped");
+            }
+
+            return allSucceeded;
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "HTTP Backup '{name}' failed.", job.Name);
+            logger.LogError(ex, "HTTP Backup '{name}' failed with unexpected error.", job.Name);
             return false;
         }
     }

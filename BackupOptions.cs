@@ -8,6 +8,7 @@ public class BackupOptions
 
     public string RunAt { get; set; } = "02:00";
     public int HistoryCopies { get; set; } = 5;
+    public int MaxParallelism { get; set; } = 3;
     public int DefaultTimeoutMinutes { get; set; } = 60;
     public string CurrentSubdirectoryName { get; set; } = "current";
     public string HistorySubdirectoryName { get; set; } = "_history";
