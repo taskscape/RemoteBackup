@@ -1,5 +1,4 @@
 using Microsoft.Extensions.Options;
-using System.Collections.Concurrent;
 
 namespace BackupService;
 
@@ -21,24 +20,18 @@ public class BackupCoordinator(
             return true;
         }
 
-        var successfulJobs = new ConcurrentBag<string>();
-        var failedJobs = new ConcurrentBag<string>();
+        var successfulJobs = new List<string>();
+        var failedJobs = new List<string>();
         var startedAt = DateTimeOffset.Now;
 
-        var parallelOptions = new ParallelOptions
-        {
-            MaxDegreeOfParallelism = _options.MaxParallelism,
-            CancellationToken = stoppingToken
-        };
-
-        await Parallel.ForEachAsync(_options.Backups, parallelOptions, async (job, ct) =>
+        foreach (var job in _options.Backups)
         {
             bool currentJobSuccess = false;
             try
             {
                 var timeoutMinutes = job.TimeoutMinutes ?? _options.DefaultTimeoutMinutes;
                 using var timeoutCts = new CancellationTokenSource(TimeSpan.FromMinutes(timeoutMinutes));
-                using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
+                using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, timeoutCts.Token);
 
                 var started = DateTimeOffset.Now;
                 var backupType = job.BackupType?.ToUpper() ?? "FTP";
@@ -99,7 +92,13 @@ public class BackupCoordinator(
                 logger.LogCritical(criticalEx, "Critical error during setup for backup job '{name}'. Skipping to next job.", job.Name);
                 failedJobs.Add(job.Name);
             }
-        });
+
+            if (stoppingToken.IsCancellationRequested)
+            {
+                logger.LogWarning("Backup run aborted due to service shutdown.");
+                break;
+            }
+        }
 
         var totalDuration = DateTimeOffset.Now - startedAt;
         
