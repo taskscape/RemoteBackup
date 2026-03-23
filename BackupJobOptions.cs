@@ -14,6 +14,9 @@ public class BackupJobOptions
     public bool Passive { get; set; } = true;
     public bool AllowInvalidCertificate { get; set; }
     
+    public bool IncludeDatabase { get; set; } = true;
+    public bool IncludeFiles { get; set; } = true;
+    
     // HTTP specific
     public string EndpointUrl { get; set; } = string.Empty;
     public string ApiToken { get; set; } = string.Empty;
