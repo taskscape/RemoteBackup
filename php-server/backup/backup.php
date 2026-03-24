@@ -53,12 +53,76 @@ switch ($action) {
     case 'db':
         handleDatabaseBackup($config);
         break;
+    case 'delete':
+        handleDelete($config);
+        break;
+    case 'update':
+        handleUpdate($config);
+        break;
     default:
         echo json_encode([
             'status' => 'error', 
-            'message' => 'Invalid action. Use action=files or action=db'
+            'message' => 'Invalid action. Use action=files, action=db, action=delete or action=update'
         ]);
         break;
+}
+
+function handleUpdate($config) {
+    $newContent = file_get_contents('php://input');
+
+    if (empty($newContent)) {
+        echo json_encode(['status' => 'error', 'message' => 'No content provided']);
+        return;
+    }
+
+    $currentFile = __FILE__;
+    
+    // Test if we can write to the file
+    if (!is_writable($currentFile)) {
+        echo json_encode(['status' => 'error', 'message' => 'File is not writable']);
+        return;
+    }
+
+    // Atomic-like update: write to temp then rename
+    $tempFile = $currentFile . '.tmp';
+    if (file_put_contents($tempFile, $newContent) !== false) {
+        if (rename($tempFile, $currentFile)) {
+            echo json_encode(['status' => 'success', 'message' => 'Script updated successfully']);
+        } else {
+            unlink($tempFile);
+            echo json_encode(['status' => 'error', 'message' => 'Failed to rename temp file']);
+        }
+    } else {
+        echo json_encode(['status' => 'error', 'message' => 'Failed to write to temp file']);
+    }
+}
+
+function handleDelete($config) {
+    $file = $_GET['file'] ?? null;
+
+    if (!$file) {
+        echo json_encode(['status' => 'error', 'message' => 'No file specified']);
+        return;
+    }
+
+    // Basic security: prevent path traversal and deleting sensitive files
+    if (strpos($file, '..') !== false || strpos($file, '/') !== false || strpos($file, '\\') !== false || 
+        $file === 'backup.php' || $file === 'config.php') {
+        echo json_encode(['status' => 'error', 'message' => 'Invalid filename']);
+        return;
+    }
+
+    $filePath = $config['backup_dir'] . DIRECTORY_SEPARATOR . $file;
+
+    if (file_exists($filePath)) {
+        if (unlink($filePath)) {
+            echo json_encode(['status' => 'success', 'message' => 'File deleted']);
+        } else {
+            echo json_encode(['status' => 'error', 'message' => 'Could not delete file']);
+        }
+    } else {
+        echo json_encode(['status' => 'error', 'message' => 'File not found']);
+    }
 }
 
 function cleanupOldBackups($dir, $days) {

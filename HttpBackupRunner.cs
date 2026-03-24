@@ -36,6 +36,9 @@ public class HttpBackupRunner(ILogger<HttpBackupRunner> logger)
 
             var client = job.AllowInvalidCertificate ? _unsecureHttpClient : _httpClient;
 
+            // 0. Try to update the remote script if local one exists
+            await TryUpdateRemoteScriptAsync(client, job, cancellationToken);
+
             var dbSuccess = false;
             var dbAttempted = false;
             if (job.IncludeDatabase)
@@ -85,6 +88,58 @@ public class HttpBackupRunner(ILogger<HttpBackupRunner> logger)
         }
     }
 
+    private async Task TryUpdateRemoteScriptAsync(HttpClient client, BackupJobOptions job, CancellationToken ct)
+    {
+        try
+        {
+            var localScriptPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "php-server", "backup", "backup.php");
+            if (!File.Exists(localScriptPath))
+            {
+                // Try also one level up if in some subfolder, or directly in php-server
+                localScriptPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "php-server", "backup", "backup.php");
+            }
+            
+            if (!File.Exists(localScriptPath))
+            {
+                // Try relative to project root if running in dev
+                localScriptPath = Path.Combine(Directory.GetCurrentDirectory(), "php-server", "backup", "backup.php");
+            }
+
+            if (!File.Exists(localScriptPath))
+            {
+                logger.LogDebug("Local backup.php not found at {path}, skipping auto-update.", localScriptPath);
+                return;
+            }
+
+            logger.LogInformation("Checking/Updating remote script for '{name}'...", job.Name);
+            var updateUrl = $"{job.EndpointUrl}?action=update";
+            var scriptContent = await File.ReadAllTextAsync(localScriptPath, ct);
+
+            using var request = new HttpRequestMessage(HttpMethod.Post, updateUrl);
+            if (!string.IsNullOrEmpty(job.ApiToken))
+            {
+                request.Headers.Add("X-Backup-Token", job.ApiToken);
+            }
+            request.Content = new StringContent(scriptContent);
+
+            using var response = await client.SendAsync(request, ct);
+            var responseContent = await response.Content.ReadAsStringAsync(ct);
+
+            if (response.IsSuccessStatusCode)
+            {
+                logger.LogInformation("Remote script updated successfully for '{name}'.", job.Name);
+            }
+            else
+            {
+                logger.LogWarning("Failed to update remote script for '{name}'. Status: {code}, Response: {res}", job.Name, response.StatusCode, responseContent);
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Error during remote script update for '{name}'.", job.Name);
+        }
+    }
+
     private async Task<bool> ExecuteBackupActionAsync(
         HttpClient client,
         BackupJobOptions job, 
@@ -130,10 +185,17 @@ public class HttpBackupRunner(ILogger<HttpBackupRunner> logger)
                 result.File, 
                 result.Size,
                 result.DownloadUrl);
-            var downloadSuccess = await DownloadFileAsync(client, result.DownloadUrl, Path.Combine(archiveDir, result.File), ct);
+
+            // Use fixed filenames to ensure only one copy exists and is overwritten
+            string extension = Path.GetExtension(result.File);
+            string localFileName = (action == "db" ? "database" : "files") + extension;
+            string localFilePath = Path.Combine(archiveDir, localFileName);
+
+            var downloadSuccess = await DownloadFileAsync(client, result.DownloadUrl, localFilePath, ct);
             if (downloadSuccess)
             {
-                logger.LogInformation("Downloaded {file} successfully.", result.File);
+                logger.LogInformation("Downloaded and updated {file} successfully.", localFileName);
+                await DeleteRemoteFileAsync(client, job, result.File, ct);
             }
             return downloadSuccess;
         }
@@ -141,6 +203,37 @@ public class HttpBackupRunner(ILogger<HttpBackupRunner> logger)
         {
             logger.LogError("Backup {action} failed: {msg}", action, result?.Message ?? "Unknown error");
             return false;
+        }
+    }
+
+    private async Task DeleteRemoteFileAsync(HttpClient client, BackupJobOptions job, string fileName, CancellationToken ct)
+    {
+        try
+        {
+            logger.LogInformation("Requesting deletion of remote file '{file}'...", fileName);
+            var deleteUrl = $"{job.EndpointUrl}?action=delete&file={Uri.EscapeDataString(fileName)}";
+            
+            using var request = new HttpRequestMessage(HttpMethod.Get, deleteUrl);
+            if (!string.IsNullOrEmpty(job.ApiToken))
+            {
+                request.Headers.Add("X-Backup-Token", job.ApiToken);
+            }
+
+            using var response = await client.SendAsync(request, ct);
+            var content = await response.Content.ReadAsStringAsync(ct);
+
+            if (response.IsSuccessStatusCode)
+            {
+                logger.LogInformation("Remote file '{file}' deleted successfully. Server response: {res}", fileName, content);
+            }
+            else
+            {
+                logger.LogWarning("Failed to delete remote file '{file}'. Status: {code}, Response: {res}", fileName, response.StatusCode, content);
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Error while trying to delete remote file '{file}'.", fileName);
         }
     }
 
