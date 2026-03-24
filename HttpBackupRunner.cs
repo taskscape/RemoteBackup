@@ -134,6 +134,7 @@ public class HttpBackupRunner(ILogger<HttpBackupRunner> logger)
             if (downloadSuccess)
             {
                 logger.LogInformation("Downloaded {file} successfully.", result.File);
+                await DeleteRemoteFileAsync(client, job, result.File, ct);
             }
             return downloadSuccess;
         }
@@ -141,6 +142,37 @@ public class HttpBackupRunner(ILogger<HttpBackupRunner> logger)
         {
             logger.LogError("Backup {action} failed: {msg}", action, result?.Message ?? "Unknown error");
             return false;
+        }
+    }
+
+    private async Task DeleteRemoteFileAsync(HttpClient client, BackupJobOptions job, string fileName, CancellationToken ct)
+    {
+        try
+        {
+            logger.LogInformation("Requesting deletion of remote file '{file}'...", fileName);
+            var deleteUrl = $"{job.EndpointUrl}?action=delete&file={Uri.EscapeDataString(fileName)}";
+            
+            using var request = new HttpRequestMessage(HttpMethod.Get, deleteUrl);
+            if (!string.IsNullOrEmpty(job.ApiToken))
+            {
+                request.Headers.Add("X-Backup-Token", job.ApiToken);
+            }
+
+            using var response = await client.SendAsync(request, ct);
+            var content = await response.Content.ReadAsStringAsync(ct);
+
+            if (response.IsSuccessStatusCode)
+            {
+                logger.LogInformation("Remote file '{file}' deleted successfully. Server response: {res}", fileName, content);
+            }
+            else
+            {
+                logger.LogWarning("Failed to delete remote file '{file}'. Status: {code}, Response: {res}", fileName, response.StatusCode, content);
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Error while trying to delete remote file '{file}'.", fileName);
         }
     }
 

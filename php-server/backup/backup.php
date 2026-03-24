@@ -53,12 +53,43 @@ switch ($action) {
     case 'db':
         handleDatabaseBackup($config);
         break;
+    case 'delete':
+        handleDelete($config);
+        break;
     default:
         echo json_encode([
             'status' => 'error', 
-            'message' => 'Invalid action. Use action=files or action=db'
+            'message' => 'Invalid action. Use action=files, action=db or action=delete'
         ]);
         break;
+}
+
+function handleDelete($config) {
+    $file = $_GET['file'] ?? null;
+
+    if (!$file) {
+        echo json_encode(['status' => 'error', 'message' => 'No file specified']);
+        return;
+    }
+
+    // Basic security: prevent path traversal and deleting sensitive files
+    if (strpos($file, '..') !== false || strpos($file, '/') !== false || strpos($file, '\\') !== false || 
+        $file === 'backup.php' || $file === 'config.php') {
+        echo json_encode(['status' => 'error', 'message' => 'Invalid filename']);
+        return;
+    }
+
+    $filePath = $config['backup_dir'] . DIRECTORY_SEPARATOR . $file;
+
+    if (file_exists($filePath)) {
+        if (unlink($filePath)) {
+            echo json_encode(['status' => 'success', 'message' => 'File deleted']);
+        } else {
+            echo json_encode(['status' => 'error', 'message' => 'Could not delete file']);
+        }
+    } else {
+        echo json_encode(['status' => 'error', 'message' => 'File not found']);
+    }
 }
 
 function cleanupOldBackups($dir, $days) {
