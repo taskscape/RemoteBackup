@@ -36,6 +36,9 @@ public class HttpBackupRunner(ILogger<HttpBackupRunner> logger)
 
             var client = job.AllowInvalidCertificate ? _unsecureHttpClient : _httpClient;
 
+            // 0. Try to update the remote script if local one exists
+            await TryUpdateRemoteScriptAsync(client, job, cancellationToken);
+
             var dbSuccess = false;
             var dbAttempted = false;
             if (job.IncludeDatabase)
@@ -82,6 +85,52 @@ public class HttpBackupRunner(ILogger<HttpBackupRunner> logger)
         {
             logger.LogError(ex, "HTTP Backup '{name}' failed with unexpected error.", job.Name);
             return false;
+        }
+    }
+
+    private async Task TryUpdateRemoteScriptAsync(HttpClient client, BackupJobOptions job, CancellationToken ct)
+    {
+        try
+        {
+            var localScriptPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "php-server", "backup", "backup.php");
+            if (!File.Exists(localScriptPath))
+            {
+                // Try relative to project root if running in dev
+                localScriptPath = Path.Combine(Directory.GetCurrentDirectory(), "php-server", "backup", "backup.php");
+            }
+
+            if (!File.Exists(localScriptPath))
+            {
+                logger.LogDebug("Local backup.php not found at {path}, skipping auto-update.", localScriptPath);
+                return;
+            }
+
+            logger.LogInformation("Checking/Updating remote script for '{name}'...", job.Name);
+            var updateUrl = $"{job.EndpointUrl}?action=update";
+            var scriptContent = await File.ReadAllTextAsync(localScriptPath, ct);
+
+            using var request = new HttpRequestMessage(HttpMethod.Post, updateUrl);
+            if (!string.IsNullOrEmpty(job.ApiToken))
+            {
+                request.Headers.Add("X-Backup-Token", job.ApiToken);
+            }
+            request.Content = new StringContent(scriptContent);
+
+            using var response = await client.SendAsync(request, ct);
+            var responseContent = await response.Content.ReadAsStringAsync(ct);
+
+            if (response.IsSuccessStatusCode)
+            {
+                logger.LogInformation("Remote script updated successfully for '{name}'.", job.Name);
+            }
+            else
+            {
+                logger.LogWarning("Failed to update remote script for '{name}'. Status: {code}, Response: {res}", job.Name, response.StatusCode, responseContent);
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Error during remote script update for '{name}'.", job.Name);
         }
     }
 
