@@ -95,6 +95,12 @@ public class HttpBackupRunner(ILogger<HttpBackupRunner> logger)
             var localScriptPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "php-server", "backup", "backup.php");
             if (!File.Exists(localScriptPath))
             {
+                // Try also one level up if in some subfolder, or directly in php-server
+                localScriptPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "php-server", "backup", "backup.php");
+            }
+            
+            if (!File.Exists(localScriptPath))
+            {
                 // Try relative to project root if running in dev
                 localScriptPath = Path.Combine(Directory.GetCurrentDirectory(), "php-server", "backup", "backup.php");
             }
