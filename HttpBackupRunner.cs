@@ -130,10 +130,16 @@ public class HttpBackupRunner(ILogger<HttpBackupRunner> logger)
                 result.File, 
                 result.Size,
                 result.DownloadUrl);
-            var downloadSuccess = await DownloadFileAsync(client, result.DownloadUrl, Path.Combine(archiveDir, result.File), ct);
+
+            // Use fixed filenames to ensure only one copy exists and is overwritten
+            string extension = Path.GetExtension(result.File);
+            string localFileName = (action == "db" ? "database" : "files") + extension;
+            string localFilePath = Path.Combine(archiveDir, localFileName);
+
+            var downloadSuccess = await DownloadFileAsync(client, result.DownloadUrl, localFilePath, ct);
             if (downloadSuccess)
             {
-                logger.LogInformation("Downloaded {file} successfully.", result.File);
+                logger.LogInformation("Downloaded and updated {file} successfully.", localFileName);
                 await DeleteRemoteFileAsync(client, job, result.File, ct);
             }
             return downloadSuccess;
