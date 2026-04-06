@@ -40,10 +40,7 @@ if (!is_dir($config['backup_dir'])) {
     mkdir($config['backup_dir'], 0755, true);
 }
 
-// 3. Cleanup Old Backups
-cleanupOldBackups($config['backup_dir'], $config['retention_days']);
-
-// 4. Determine Action
+// 3. Determine Action
 $action = $_GET['action'] ?? null;
 
 switch ($action) {
@@ -125,15 +122,22 @@ function handleDelete($config) {
     }
 }
 
-function cleanupOldBackups($dir, $days) {
-    $files = glob($dir . '/*');
-    $now = time();
-    foreach ($files as $file) {
-        if (is_file($file) && (basename($file) !== 'backup.php' && basename($file) !== 'config.php')) {
-            if ($now - filemtime($file) >= $days * 24 * 60 * 60) {
-                unlink($file);
-            }
-        }
+function cleanupBackupFamily($dir, $prefix, $keep = 1) {
+    $pattern = $dir . DIRECTORY_SEPARATOR . $prefix . '*';
+    $files = glob($pattern);
+
+    if (!$files) {
+        return;
+    }
+
+    $files = array_filter($files, 'is_file');
+    usort($files, function ($left, $right) {
+        return filemtime($right) <=> filemtime($left);
+    });
+
+    $filesToDelete = array_slice($files, max(0, $keep));
+    foreach ($filesToDelete as $file) {
+        @unlink($file);
     }
 }
 
@@ -141,6 +145,8 @@ function handleFilesBackup($config) {
     $timestamp = date('Y-m-d_H-i-s');
     $filename = 'fs_backup_' . $timestamp . '.zip';
     $outputPath = $config['backup_dir'] . '/' . $filename;
+
+    cleanupBackupFamily($config['backup_dir'], 'fs_backup_', 0);
 
     if (!class_exists('ZipArchive')) {
         echo json_encode(['status' => 'error', 'message' => 'ZipArchive class not found.']);
@@ -192,6 +198,7 @@ function handleFilesBackup($config) {
     $zip->close();
 
     if (file_exists($outputPath)) {
+        cleanupBackupFamily($config['backup_dir'], 'fs_backup_', 1);
         echo json_encode([
             'status' => 'success',
             'action' => 'files',
@@ -209,6 +216,8 @@ function handleDatabaseBackup($config) {
     $timestamp = date('Y-m-d_H-i-s');
     $filename = 'db_backup_' . $timestamp . '.sql';
     $outputPath = $config['backup_dir'] . '/' . $filename;
+
+    cleanupBackupFamily($config['backup_dir'], 'db_backup_', 0);
 
     try {
         if (!function_exists('mysqli_connect')) {
@@ -250,6 +259,7 @@ function handleDatabaseBackup($config) {
         fclose($handle);
         $mysqli->close();
 
+        cleanupBackupFamily($config['backup_dir'], 'db_backup_', 1);
         echo json_encode([
             'status' => 'success',
             'action' => 'db',

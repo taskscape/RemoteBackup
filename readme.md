@@ -1,11 +1,13 @@
 # RemoteBackup Service
 
 Advanced Windows service for automated scheduled backups. The system supports three primary modes of operation:
+
 1. FTP Mirror (Remote to Local): Mirrors a remote FTP folder to a local disk, maintains history snapshots, and compresses them into ZIP archives.
 2. FTP Upload (Local to Remote): Compresses a local folder into a ZIP archive and uploads it to a remote FTP server.
 3. HTTP Trigger (Trigger and Download): Calls a specific URL that generates a backup on the server, then downloads the resulting file locally.
 
 ## Requirements
+
 - .NET SDK 10.0+
 - Windows machine with access to the remote servers
 - Local destination on a drive letter path (for example: D:\Backups\SiteA)
@@ -26,11 +28,13 @@ The installer handles service registration, starting the service, and ensures yo
 ### Manual Installation
 
 1. Build and publish the service:
+
 ## Configuration (appsettings.json)
 
 The configuration is located within the "BackupOptions" section. You can define multiple independent backup tasks in the "Backups" array. The important sections are `BackupOptions`, `FileLogging`, and `ServiceSettings`.
 
 ### Global Settings
+
 | Field | Description | Example |
 | :--- | :--- | :--- |
 | RunAt | Time of day to start the backup (24h format). | "02:30" |
@@ -45,6 +49,7 @@ The configuration is located within the "BackupOptions" section. You can define 
 Each task in the "Backups" array can contain the following fields:
 
 #### General Settings
+
 - Name (Required): Unique name for the task (used in logs and filenames).
 - BackupType: Type of backup: "FTP" (default), "FTP_UPLOAD", or "HTTP".
 - LocalPath (Required): Local path on the disk (destination for downloads or source for uploads).
@@ -53,6 +58,7 @@ Each task in the "Backups" array can contain the following fields:
 - TimeoutMinutes: Overrides the default timeout for this job.
 
 #### FTP Configuration (for "FTP" and "FTP_UPLOAD" types)
+
 - Host: FTP server address (e.g., ftp.yourdomain.com).
 - Port: Server port (default: 21).
 - Username: FTP username.
@@ -63,6 +69,7 @@ Each task in the "Backups" array can contain the following fields:
 - AllowInvalidCertificate: Ignore SSL certificate errors (true/false).
 
 #### HTTP Configuration (for "HTTP" type)
+
 - EndpointUrl: Full URL to trigger the backup (e.g., https://api.site.com/backup.php).
 - ApiToken: A separate field for the authorization token or secret key.
 
@@ -70,9 +77,10 @@ Each task in the "Backups" array can contain the following fields:
 
 ### 1. HTTP/PHP Mode (Recommended for Web Services)
 
-This mode uses a PHP script on your server to bundle files and database into archives for the C# service to download.
+This mode uses a PHP script on your server to generate filesystem and database backups on the remote host, then the C# service downloads them to the local drive.
 
-#### Server Setup:
+#### Server Setup
+
 1. Copy the contents of the `php-server/` folder to your website (e.g., to `/backup/`).
 2. Edit `php-server/config.php`:
    - Set `auth_token` to a secure random string.
@@ -80,6 +88,7 @@ This mode uses a PHP script on your server to bundle files and database into arc
    - Adjust `fs -> source_dir` to point to your website root.
 
 #### Client Setup (`appsettings.json`):
+
 ```json
 {
   "BackupOptions": {
@@ -129,20 +138,24 @@ sections are `BackupOptions`, `FileLogging`, and `ServiceSettings`.
 The `php-server` folder contains a ready-to-use script for the HTTP backup mode. This is useful if you want to trigger a backup of a web server from the Windows service.
 
 ### Files in php-server:
-1. **backup.php**: The main execution script. When called with a valid token, it zips the configured source directory and streams it to the client.
+1. **backup.php**: The main execution script. When called with a valid token, it creates a remote backup artifact, returns a download URL, and supports deleting that artifact after a successful local download.
 2. **config.php**: Security and path configuration.
 
 ### config.php Breakdown:
+
 Modify these values to secure your endpoint:
+
 - **API_TOKEN**: A secret string that must match the `ApiToken` in your `appsettings.json`.
 - **ALLOWED_IPS**: An array of IP addresses allowed to trigger the backup.
 - **BACKUP_SOURCE_DIR**: The absolute path to the folder on the web server to back up.
-- **TEMP_DIR**: Where the temporary ZIP file is created before downloading.
+- **backup_dir**: Where the remote backup artifacts are created before the Windows service downloads them.
 
 ---
 
 ## Sensitive values
+
 Passwords are stored in clear text in appsettings.json. For production use, consider setting credentials in environment variables and leaving the file values blank:
+
 ```powershell
 $env:BackupOptions__Backups__0__Username = "user"
 $env:BackupOptions__Backups__0__Password = "password"
@@ -151,14 +164,17 @@ $env:BackupOptions__Backups__0__Password = "password"
 ---
 
 ## Running behavior
+
 - **Startup Test**: On startup, the service performs a one-off FTP test run using the first configured backup job and writes progress to the console.
 - **Daily Schedule**: The service runs once per day at the configured `RunAt` time.
 - **Sequential Execution**: Backups execute sequentially; a failure does not block the next job.
 - **Timeouts**: Each job is cancelled if it exceeds its timeout.
 - **Folder Structure**:
+
     - The remote path is mirrored into `LocalPath\current`.
     - Snapshot copies are stored in `LocalPath\_history\yyyyMMdd_HHmmss`.
     - A daily zip archive is created at `LocalPath\archives\<JobName>\yyyy-MM-dd.zip`, and archives older than `RetentionDays` are deleted.
+
 - **Logging**: Logs are written to the Windows Event Log and to the file path in `FileLogging:Path`.
 
 ---
@@ -166,6 +182,7 @@ $env:BackupOptions__Backups__0__Password = "password"
 ## Configuration Examples
 
 ### 1. FTP (Remote to Local)
+
 ```json
 {
   "BackupOptions": {
@@ -187,6 +204,7 @@ $env:BackupOptions__Backups__0__Password = "password"
 ```
 
 ### 2. FTP Upload (Local to Remote)
+
 ```json
 {
   "BackupOptions": {
@@ -210,6 +228,7 @@ $env:BackupOptions__Backups__0__Password = "password"
 ```
 
 ### 3. HTTP Trigger and Download
+
 ```json
 {
   "BackupOptions": {
@@ -227,7 +246,15 @@ $env:BackupOptions__Backups__0__Password = "password"
 }
 ```
 
+HTTP mode behavior:
+
+- The remote PHP endpoint creates the backup on the web server first.
+- The Windows service downloads the generated database/files backup into `LocalPath\<JobName>\database.sql` or `LocalPath\<JobName>\files.zip`.
+- The remote PHP side keeps only one filesystem backup and one database backup at a time.
+- After a successful local download, the service immediately requests deletion of the remote backup file. If that delete step fails, the job is treated as failed so the remote copy is not silently left behind.
+
 ### 4. Multiple Services (Combined Example)
+
 ```json
 {
   "BackupOptions": {

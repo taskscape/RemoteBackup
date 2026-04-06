@@ -10,8 +10,8 @@ return [
     // Directory where backup files will be stored (same folder as script)
     'backup_dir' => __DIR__,
 
-    // How many days to keep old backup files
-    'retention_days' => 7,
+    // Remote HTTP mode keeps only the most recent filesystem and database backup.
+    'retention_days' => 1,
 
     // Database configuration
      'db' => [

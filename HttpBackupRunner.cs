@@ -195,7 +195,16 @@ public class HttpBackupRunner(ILogger<HttpBackupRunner> logger)
             if (downloadSuccess)
             {
                 logger.LogInformation("Downloaded and updated {file} successfully.", localFileName);
-                await DeleteRemoteFileAsync(client, job, result.File, ct);
+                var deleteSuccess = await DeleteRemoteFileAsync(client, job, result.File, ct);
+                if (!deleteSuccess)
+                {
+                    logger.LogWarning(
+                        "Backup {action} for '{name}' was downloaded locally, but remote file '{file}' could not be removed.",
+                        action,
+                        job.Name,
+                        result.File);
+                    return false;
+                }
             }
             return downloadSuccess;
         }
@@ -206,7 +215,7 @@ public class HttpBackupRunner(ILogger<HttpBackupRunner> logger)
         }
     }
 
-    private async Task DeleteRemoteFileAsync(HttpClient client, BackupJobOptions job, string fileName, CancellationToken ct)
+    private async Task<bool> DeleteRemoteFileAsync(HttpClient client, BackupJobOptions job, string fileName, CancellationToken ct)
     {
         try
         {
@@ -225,15 +234,16 @@ public class HttpBackupRunner(ILogger<HttpBackupRunner> logger)
             if (response.IsSuccessStatusCode)
             {
                 logger.LogInformation("Remote file '{file}' deleted successfully. Server response: {res}", fileName, content);
+                return true;
             }
-            else
-            {
-                logger.LogWarning("Failed to delete remote file '{file}'. Status: {code}, Response: {res}", fileName, response.StatusCode, content);
-            }
+
+            logger.LogWarning("Failed to delete remote file '{file}'. Status: {code}, Response: {res}", fileName, response.StatusCode, content);
+            return false;
         }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Error while trying to delete remote file '{file}'.", fileName);
+            return false;
         }
     }
 
